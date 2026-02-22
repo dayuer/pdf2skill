@@ -185,6 +185,7 @@ def extract_skill_from_chunk(
     *,
     client: Optional[DeepSeekClient] = None,
     prompt_version: str = "v0.1",
+    prompt_hint: str = "",
 ) -> list[RawSkill]:
     """从单个文本块中提取 Skill（同步）。"""
     if client is None:
@@ -198,6 +199,11 @@ def extract_skill_from_chunk(
         prompt_name = "table_extractor"
 
     system = _load_system_prompt(prompt_name, prompt_version, constraint)
+
+    # 用户调优指令注入
+    if prompt_hint:
+        system += f"\n\n## 用户调优指令\n\n{prompt_hint}"
+
     user = user_template.format(context=chunk.context, content=chunk.content)
 
     response = client.chat(system_prompt=system, user_prompt=user)
@@ -213,6 +219,7 @@ def extract_skill_from_chunk(
             "heading_path": chunk.heading_path,
             "char_count": chunk.char_count,
             "book_type": schema.book_type,
+            "prompt_hint": prompt_hint[:200] if prompt_hint else "",
         },
     )
 
@@ -253,6 +260,7 @@ async def extract_skills_batch(
     *,
     client: Optional[AsyncDeepSeekClient] = None,
     prompt_version: str = "v0.1",
+    prompt_hint: str = "",
     on_skill_extracted: Optional[Callable] = None,
 ) -> list[RawSkill]:
     """
@@ -263,6 +271,7 @@ async def extract_skills_batch(
         schema: Skill Schema 模板
         client: 异步 DeepSeek 客户端
         prompt_version: Prompt 版本号
+        prompt_hint: 用户调优指令，拼接到 system prompt 末尾
         on_skill_extracted: 回调函数，每提取到一个 Skill 时触发
 
     Returns:
@@ -278,6 +287,11 @@ async def extract_skills_batch(
     for chunk in chunks:
         pn = "table_extractor" if _is_table_heavy(chunk.content) else prompt_name
         system = _load_system_prompt(pn, prompt_version, constraint)
+
+        # 用户调优指令注入
+        if prompt_hint:
+            system += f"\n\n## 用户调优指令\n\n{prompt_hint}"
+
         user = user_template.format(context=chunk.context, content=chunk.content)
 
         tasks.append({

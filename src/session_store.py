@@ -50,6 +50,8 @@ class FileSession:
         total_chunks: int = 0,
         filtered_chunks: int = 0,
         prompt_type: str = "",
+        core_components: list[str] | None = None,
+        skill_types: list[str] | None = None,
     ) -> None:
         """保存文档元信息"""
         data = {
@@ -62,6 +64,8 @@ class FileSession:
             "total_chunks": total_chunks,
             "filtered_chunks": filtered_chunks,
             "prompt_type": prompt_type,
+            "core_components": core_components or [],
+            "skill_types": skill_types or [],
             "created_at": time.time(),
         }
         self._write_json("meta.json", data)
@@ -218,6 +222,42 @@ class FileSession:
 
     def skill_count(self) -> int:
         return len(list((self.root / "skills").glob("*.json")))
+
+    # ──── 调优历史（Prompt 版本链） ────
+
+    def save_tune_record(
+        self,
+        *,
+        chunk_index: int,
+        prompt_hint: str,
+        extracted_skills: list[dict],
+        source_text: str = "",
+    ) -> int:
+        """追加一条调优记录，返回新版本号"""
+        history = self.load_tune_history()
+        version = len(history) + 1
+        record = {
+            "version": version,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "chunk_index": chunk_index,
+            "prompt_hint": prompt_hint,
+            "extracted_skills": extracted_skills,
+            "source_text_preview": source_text[:300],
+        }
+        history.append(record)
+        self._write_json("tune_history.json", history)
+        return version
+
+    def load_tune_history(self) -> list[dict]:
+        """读取完整调优历史"""
+        return self._read_json("tune_history.json") or []
+
+    def get_active_prompt_hint(self) -> str:
+        """返回最后一次调优的 prompt_hint（用于全量执行）"""
+        history = self.load_tune_history()
+        if not history:
+            return ""
+        return history[-1].get("prompt_hint", "")
 
     # ──── 工具 ────
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import time
 import uuid
 from pathlib import Path
@@ -29,7 +30,7 @@ from .llm_client import AsyncDeepSeekClient, DeepSeekClient
 from .markdown_chunker import chunk_markdown, ChunkResult, TextChunk
 from .schema_generator import SkillSchema, generate_schema
 from .semantic_filter import filter_chunks
-from .skill_extractor import extract_skills_batch, _resolve_prompt_type
+from .skill_extractor import extract_skills_batch, extract_skill_from_chunk, _resolve_prompt_type
 from .skill_validator import SkillValidator, ValidatedSkill, RawSkill
 from .skill_reducer import cluster_skills, reduce_all_clusters
 from .skill_packager import package_skills
@@ -97,6 +98,8 @@ async def analyze_document(file: UploadFile = File(...)):
         total_chunks=len(chunk_result.chunks),
         filtered_chunks=len(filter_result.kept),
         prompt_type=prompt_name,
+        core_components=schema.fields.get("core_components", []),
+        skill_types=schema.fields.get("skill_types", []),
     )
     fs.save_schema(schema)
     fs.save_chunks(filter_result.kept)
@@ -116,6 +119,8 @@ async def analyze_document(file: UploadFile = File(...)):
         "dropped_chunks": filter_result.dropped_count,
         "prompt_type": prompt_name,
         "schema_constraint": schema.to_prompt_constraint()[:500],
+        "core_components": schema.fields.get("core_components", []),
+        "skill_types": schema.fields.get("skill_types", []),
     }
 
 
@@ -150,6 +155,176 @@ async def update_session_settings(session_id: str, request: Request):
 
     return {"ok": True, "book_type": new_book_type, "prompt_type": new_prompt_type}
 
+
+# ──── 阶段 2：深度调优 API ────
+
+
+@app.get("/api/chunks/{session_id}")
+async def list_chunks(session_id: str):
+    """返回所有 chunk 的摘要列表，用于 chunk 选择器。"""
+    fs = FileSession(session_id)
+    chunks = fs.load_chunks()
+    if not chunks:
+        return JSONResponse({"error": "无 chunk 数据"}, status_code=404)
+    return [
+        {
+            "index": c.index,
+            "heading_path": c.heading_path,
+            "char_count": c.char_count,
+            "preview": c.content[:80].replace("\n", " "),
+        }
+        for c in chunks
+    ]
+
+
+@app.post("/api/tune/{session_id}")
+async def tune_chunk(session_id: str, request: Request):
+    """
+    对指定单个 chunk 执行提取，返回原文 + 提取结果。
+    支持 prompt_hint 调优指令，每次调用自动写入版本链。
+    """
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    body = await request.json()
+    chunk_index = body.get("chunk_index", 0)
+    prompt_hint = body.get("prompt_hint", "")
+
+    # 加载指定 chunk
+    target = fs.load_chunks_by_indices([chunk_index])
+    if not target:
+        return JSONResponse({"error": f"chunk {chunk_index} 不存在"}, status_code=404)
+    chunk = target[0]
+
+    # Schema
+    schema = _get_schema(session_id, fs)
+
+    # 同步提取（单 chunk，无需异步并发）
+    client = DeepSeekClient()
+    raw_skills = extract_skill_from_chunk(
+        chunk, schema, client=client, prompt_hint=prompt_hint
+    )
+
+    # 校验
+    validator = SkillValidator()
+    src_texts = [chunk.content] * len(raw_skills)
+    passed, failed = validator.validate_batch(raw_skills, source_texts=src_texts)
+
+    # 构建结果
+    skills_data = [
+        {
+            "name": s.name,
+            "trigger": s.trigger,
+            "domain": s.domain,
+            "body": s.body[:800],
+            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+        }
+        for s in passed
+    ] + [
+        {
+            "name": f.name,
+            "trigger": f.trigger,
+            "domain": f.domain,
+            "body": f.body[:800],
+            "status": "failed",
+            "warnings": f.warnings,
+        }
+        for f in failed
+    ]
+
+    # 写入版本链
+    version = fs.save_tune_record(
+        chunk_index=chunk_index,
+        prompt_hint=prompt_hint,
+        extracted_skills=skills_data,
+        source_text=chunk.content,
+    )
+
+    return {
+        "version": version,
+        "chunk_index": chunk_index,
+        "source_text": chunk.content,
+        "source_context": chunk.context,
+        "heading_path": chunk.heading_path,
+        "char_count": chunk.char_count,
+        "extracted_skills": skills_data,
+        "prompt_hint_used": prompt_hint,
+        "passed": len(passed),
+        "failed": len(failed),
+    }
+
+
+@app.get("/api/tune-history/{session_id}")
+async def get_tune_history(session_id: str):
+    """返回完整调优历史（版本链）。"""
+    fs = FileSession(session_id)
+    return fs.load_tune_history()
+
+
+@app.post("/api/sample-check/{session_id}")
+async def sample_check(session_id: str, request: Request):
+    """
+    随机抽样验证：随机选 N 个 chunk → 批量提取 → 返回逐条对比结果。
+    使用最后确认的 prompt_hint。
+    """
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    body = await request.json()
+    sample_size = body.get("sample_size", 5)
+
+    chunks = fs.load_chunks()
+    schema = _get_schema(session_id, fs)
+    prompt_hint = fs.get_active_prompt_hint()
+
+    # 随机抽样
+    sample = random.sample(chunks, min(sample_size, len(chunks)))
+
+    # 异步批量提取
+    async_client = AsyncDeepSeekClient()
+    raw_skills = await extract_skills_batch(
+        sample, schema, client=async_client, prompt_hint=prompt_hint
+    )
+
+    # 校验
+    validator = SkillValidator()
+    source_map = {c.index: c.content for c in sample}
+    src_texts = [source_map.get(rs.source_chunk_index) for rs in raw_skills]
+    passed, failed = validator.validate_batch(raw_skills, source_texts=src_texts)
+
+    # 按 chunk 分组组织结果
+    results_by_chunk: dict[int, dict] = {}
+    for c in sample:
+        results_by_chunk[c.index] = {
+            "chunk_index": c.index,
+            "heading_path": c.heading_path,
+            "source_preview": c.content[:200],
+            "skills": [],
+        }
+    for s in passed:
+        if s.source_chunk_index in results_by_chunk:
+            results_by_chunk[s.source_chunk_index]["skills"].append({
+                "name": s.name, "trigger": s.trigger, "status": "pass",
+            })
+    for f in failed:
+        if f.source_chunk_index in results_by_chunk:
+            results_by_chunk[f.source_chunk_index]["skills"].append({
+                "name": f.name, "trigger": f.trigger, "status": "failed",
+            })
+
+    return {
+        "sample_size": len(sample),
+        "total_raw": len(raw_skills),
+        "passed": len(passed),
+        "failed": len(failed),
+        "pass_rate": round(len(passed) / max(len(raw_skills), 1) * 100, 1),
+        "prompt_hint_used": prompt_hint,
+        "results": list(results_by_chunk.values()),
+    }
 
 @app.post("/api/preview/{session_id}")
 async def preview_sample(session_id: str, sample_size: int = 5):
@@ -230,6 +405,7 @@ async def execute_full(request: Request, session_id: str):
 
     async def event_generator():
         schema = _get_schema(session_id, fs)
+        prompt_hint = fs.get_active_prompt_hint()
         doc_name = meta["doc_name"]
         total = fs.chunk_count()
         skill_idx = fs.skill_count()
@@ -304,7 +480,8 @@ async def execute_full(request: Request, session_id: str):
             batch_chunks = fs.load_chunks_by_indices(batch_indices)
 
             batch_skills = await extract_skills_batch(
-                batch_chunks, schema, client=async_client
+                batch_chunks, schema, client=async_client,
+                prompt_hint=prompt_hint,
             )
             raw_count += len(batch_skills)
             completed += len(batch_chunks)
@@ -464,12 +641,9 @@ _HTML_PAGE = """<!DOCTYPE html>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
-    background: #0a0a0f;
-    color: #e4e4e7;
-    min-height: 100vh;
+    background: #0a0a0f; color: #e4e4e7; min-height: 100vh;
   }
-  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
-
+  .container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
   h1 {
     font-size: 32px; font-weight: 700;
     background: linear-gradient(135deg, #7c3aed, #06b6d4);
@@ -478,7 +652,6 @@ _HTML_PAGE = """<!DOCTYPE html>
   }
   .subtitle { color: #71717a; font-size: 14px; margin-bottom: 32px; }
 
-  /* 阶段卡片 */
   .phase-card {
     background: #18181b; border: 1px solid #27272a;
     border-radius: 16px; padding: 24px; margin-bottom: 20px;
@@ -487,10 +660,7 @@ _HTML_PAGE = """<!DOCTYPE html>
   .phase-card.active { border-color: #7c3aed; box-shadow: 0 0 20px rgba(124,58,237,0.15); }
   .phase-card.done { border-color: #22c55e; opacity: 0.85; }
   .phase-card.hidden { display: none; }
-
-  .phase-header {
-    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
-  }
+  .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
   .phase-number {
     width: 32px; height: 32px; border-radius: 50%;
     background: #27272a; color: #71717a;
@@ -501,11 +671,9 @@ _HTML_PAGE = """<!DOCTYPE html>
   .phase-card.done .phase-number { background: #22c55e; color: #fff; }
   .phase-title { font-size: 18px; font-weight: 600; }
 
-  /* 上传区域 */
   .upload-zone {
     border: 2px dashed #3f3f46; border-radius: 12px;
-    padding: 40px; text-align: center; cursor: pointer;
-    transition: all 0.3s;
+    padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s;
   }
   .upload-zone:hover { border-color: #7c3aed; background: rgba(124,58,237,0.05); }
   .upload-zone.dragover { border-color: #7c3aed; background: rgba(124,58,237,0.1); }
@@ -513,87 +681,98 @@ _HTML_PAGE = """<!DOCTYPE html>
   .upload-text { color: #a1a1aa; font-size: 14px; }
   input[type=file] { display: none; }
 
-  /* 结果展示 */
   .info-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px; margin: 16px 0;
   }
-  .info-item {
-    background: #1f1f23; border-radius: 8px; padding: 12px;
-  }
+  .info-item { background: #1f1f23; border-radius: 8px; padding: 12px; }
   .info-label { color: #71717a; font-size: 12px; margin-bottom: 4px; }
   .info-value { font-size: 16px; font-weight: 600; }
   .info-value.highlight { color: #7c3aed; }
 
-  /* Skill 卡片 */
-  .skill-card {
-    background: #1f1f23; border: 1px solid #27272a;
-    border-radius: 12px; padding: 16px; margin: 8px 0;
-    transition: all 0.2s;
+  .summary-section {
+    background: #1f1f23; border-radius: 10px; padding: 14px 16px;
+    margin: 12px 0 4px; border-left: 3px solid #7c3aed;
   }
-  .skill-card:hover { border-color: #3f3f46; }
-  .skill-name { font-weight: 600; color: #c084fc; margin-bottom: 4px; }
-  .skill-trigger { color: #a1a1aa; font-size: 13px; margin-bottom: 8px; }
-  .skill-domain {
-    display: inline-block; background: rgba(124,58,237,0.2);
-    color: #c084fc; padding: 2px 8px; border-radius: 4px;
-    font-size: 11px; margin-right: 6px;
-  }
-  .skill-body {
-    font-size: 13px; color: #a1a1aa; margin-top: 8px;
-    white-space: pre-wrap; line-height: 1.6;
-    max-height: 200px; overflow-y: auto;
-  }
+  .summary-section .summary-title { font-size: 12px; color: #71717a; margin-bottom: 8px; font-weight: 600; }
+  .summary-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .summary-tag { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 12px; background: rgba(124,58,237,0.15); color: #c084fc; }
+  .summary-tag.green { background: rgba(34,197,94,0.15); color: #4ade80; }
 
-  /* 按钮 */
-  .btn {
-    padding: 10px 24px; border-radius: 8px; border: none;
-    font-size: 14px; font-weight: 600; cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-primary {
-    background: linear-gradient(135deg, #7c3aed, #6d28d9);
-    color: #fff;
-  }
-  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-  .btn-ghost {
-    background: transparent; border: 1px solid #3f3f46; color: #a1a1aa;
-  }
-  .btn-ghost:hover { border-color: #7c3aed; color: #c084fc; }
-
-  /* 进度条 */
-  .progress-bar {
-    width: 100%; height: 6px; background: #27272a;
-    border-radius: 3px; overflow: hidden; margin: 12px 0;
-  }
-  .progress-fill {
-    height: 100%; border-radius: 3px;
-    background: linear-gradient(90deg, #7c3aed, #06b6d4);
-    transition: width 0.5s ease;
-    width: 0%;
-  }
-  .progress-text { font-size: 13px; color: #71717a; }
-
-  /* 加载动画 */
-  .spinner {
-    display: inline-block; width: 20px; height: 20px;
-    border: 2px solid #3f3f46; border-top-color: #7c3aed;
-    border-radius: 50%; animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .loading-text { display: flex; align-items: center; gap: 10px; color: #a1a1aa; }
-
-  /* 设置下拉框 */
   .setting-select {
     width: 100%; padding: 8px 10px; margin-top: 4px;
     background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46;
-    border-radius: 6px; font-size: 14px; font-weight: 600;
-    cursor: pointer; outline: none;
+    border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; outline: none;
   }
   .setting-select:focus { border-color: #7c3aed; }
   .setting-select option { background: #18181b; color: #e4e4e7; }
+
+  .skill-card {
+    background: #1f1f23; border: 1px solid #27272a;
+    border-radius: 12px; padding: 16px; margin: 8px 0;
+  }
+  .skill-name { font-weight: 600; color: #c084fc; margin-bottom: 4px; }
+  .skill-trigger { color: #a1a1aa; font-size: 13px; margin-bottom: 8px; }
+  .skill-domain { display: inline-block; background: rgba(124,58,237,0.2); color: #c084fc; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 6px; }
+  .skill-body { font-size: 13px; color: #a1a1aa; margin-top: 8px; white-space: pre-wrap; line-height: 1.6; max-height: 200px; overflow-y: auto; }
+
+  .btn { padding: 10px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-ghost { background: transparent; border: 1px solid #3f3f46; color: #a1a1aa; }
+  .btn-ghost:hover { border-color: #7c3aed; color: #c084fc; }
+  .btn-sm { padding: 6px 14px; font-size: 12px; }
+
+  .progress-bar { width: 100%; height: 6px; background: #27272a; border-radius: 3px; overflow: hidden; margin: 12px 0; }
+  .progress-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #7c3aed, #06b6d4); transition: width 0.5s ease; width: 0%; }
+  .progress-text { font-size: 13px; color: #71717a; }
+
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #3f3f46; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { display: flex; align-items: center; gap: 10px; color: #a1a1aa; }
+
+  /* 调优面板 */
+  .tune-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .source-pane, .result-pane { background: #1f1f23; border-radius: 10px; padding: 16px; max-height: 500px; overflow-y: auto; }
+  .pane-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .pane-title .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .pane-title .dot.source { background: #06b6d4; }
+  .pane-title .dot.result { background: #7c3aed; }
+  .source-text { font-size: 13px; color: #d4d4d8; white-space: pre-wrap; line-height: 1.7; font-family: 'SF Mono', monospace; }
+
+  .tune-textarea {
+    width: 100%; min-height: 80px; padding: 12px;
+    background: #1f1f23; color: #e4e4e7; border: 1px solid #3f3f46;
+    border-radius: 8px; font-size: 14px; resize: vertical; font-family: inherit; outline: none;
+  }
+  .tune-textarea:focus { border-color: #7c3aed; }
+  .tune-textarea::placeholder { color: #52525b; }
+
+  .version-timeline { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .version-chip {
+    padding: 4px 12px; border-radius: 20px; font-size: 12px;
+    cursor: pointer; transition: all 0.2s;
+    background: #27272a; color: #71717a; border: 1px solid #3f3f46;
+  }
+  .version-chip:hover { border-color: #7c3aed; color: #c084fc; }
+  .version-chip.active { background: rgba(124,58,237,0.2); color: #c084fc; border-color: #7c3aed; }
+
+  .chunk-select {
+    width: 100%; padding: 8px 10px; margin-bottom: 12px;
+    background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46;
+    border-radius: 6px; font-size: 13px; cursor: pointer; outline: none;
+  }
+  .chunk-select:focus { border-color: #7c3aed; }
+
+  .sample-item { background: #1f1f23; border-radius: 10px; padding: 14px; margin: 8px 0; border-left: 3px solid #3f3f46; }
+  .sample-item.pass { border-left-color: #22c55e; }
+  .sample-item.fail { border-left-color: #ef4444; }
+  .sample-heading { font-size: 13px; font-weight: 600; color: #a1a1aa; margin-bottom: 6px; }
+  .sample-preview { font-size: 12px; color: #71717a; margin-bottom: 8px; }
+  .sample-skills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sample-skill-tag { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(124,58,237,0.15); color: #c084fc; }
+  .sample-skill-tag.fail { background: rgba(239,68,68,0.15); color: #f87171; }
 </style>
 </head>
 <body>
@@ -601,12 +780,9 @@ _HTML_PAGE = """<!DOCTYPE html>
   <h1>pdf2skill</h1>
   <p class="subtitle">智能文档解析 → 结构化知识提取</p>
 
-  <!-- 阶段一：上传分析 -->
+  <!-- 阶段 1 -->
   <div id="phase1" class="phase-card active">
-    <div class="phase-header">
-      <div class="phase-number">1</div>
-      <div class="phase-title">上传文档 · 类型检测</div>
-    </div>
+    <div class="phase-header"><div class="phase-number">1</div><div class="phase-title">上传文档 · 类型检测</div></div>
     <div id="upload-area">
       <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📄</div>
@@ -614,152 +790,75 @@ _HTML_PAGE = """<!DOCTYPE html>
       </div>
       <input type="file" id="fileInput" accept=".pdf,.txt,.epub,.md">
     </div>
-    <div id="analysis-loading" style="display:none" class="loading-text">
-      <div class="spinner"></div>
-      <span>R1 正在分析文档类型和知识结构...</span>
-    </div>
+    <div id="analysis-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在分析文档类型和知识结构...</span></div>
     <div id="analysis-result" style="display:none"></div>
   </div>
 
-  <!-- 阶段二：采样预览 -->
+  <!-- 阶段 2：深度调优 -->
   <div id="phase2" class="phase-card hidden">
-    <div class="phase-header">
-      <div class="phase-number">2</div>
-      <div class="phase-title">采样预览 · 确认方向</div>
+    <div class="phase-header"><div class="phase-number">2</div><div class="phase-title">深度调优 · 原文对比</div></div>
+    <div id="tune-controls">
+      <label style="font-size:13px; color:#71717a;">选择文本块</label>
+      <select id="chunk-select" class="chunk-select"></select>
     </div>
-    <div id="preview-loading" style="display:none" class="loading-text">
-      <div class="spinner"></div>
-      <span>R1 正在采样提取 5 个文本块...</span>
+    <div id="tune-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在提取...</span></div>
+    <div id="tune-result" style="display:none"></div>
+    <div style="margin-top:12px">
+      <label style="font-size:13px; color:#71717a;">Prompt 调优方向（可选）</label>
+      <textarea id="prompt-hint" class="tune-textarea" placeholder="例：只保留可操作的步骤，去掉背景描述和作者观点"></textarea>
+      <div style="margin-top:10px; display:flex; gap:12px; align-items:center;">
+        <button class="btn btn-primary" onclick="runTune()">🔬 提取并对比</button>
+        <button class="btn btn-ghost btn-sm" onclick="goToSampleCheck()">✅ 调优完成，进入抽样验证</button>
+      </div>
     </div>
-    <div id="preview-result" style="display:none"></div>
+    <div id="version-timeline-wrap" style="display:none; margin-top:16px">
+      <label style="font-size:12px; color:#71717a;">版本历史（点击回溯）</label>
+      <div id="version-timeline" class="version-timeline"></div>
+    </div>
   </div>
 
-  <!-- 阶段三：全量执行 -->
+  <!-- 阶段 3：随机抽样验证 -->
   <div id="phase3" class="phase-card hidden">
-    <div class="phase-header">
-      <div class="phase-number">3</div>
-      <div class="phase-title">全量执行 · 实时结果</div>
+    <div class="phase-header"><div class="phase-number">3</div><div class="phase-title">随机抽样验证</div></div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <button class="btn btn-primary" onclick="runSampleCheck()">🎲 随机抽样 5 个 chunk</button>
+      <button class="btn btn-ghost btn-sm" onclick="goToExecute()">⚡ 跳过验证，直接全量</button>
     </div>
+    <div id="sample-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在批量提取和校验...</span></div>
+    <div id="sample-result" style="display:none"></div>
+  </div>
+
+  <!-- 阶段 4：全量执行 -->
+  <div id="phase4" class="phase-card hidden">
+    <div class="phase-header"><div class="phase-number">4</div><div class="phase-title">全量执行 · 实时结果</div></div>
     <div id="execute-progress" style="display:none"></div>
     <div id="execute-result" style="display:none"></div>
-    <div id="skill-stream"></div>
   </div>
 </div>
 
 <script>
 let sessionId = localStorage.getItem('pdf2skill_session');
 
-// ── 页面加载：自动恢复状态 ──
-(async function restoreState() {
-  if (!sessionId) return;
-  try {
-    const res = await fetch('/api/session/' + sessionId + '/state');
-    if (!res.ok) { localStorage.removeItem('pdf2skill_session'); return; }
-    const state = await res.json();
-    const phase = state.status?.phase || 'analyzed';
-    const meta = state.meta;
-
-    // 恢复阶段一
-    document.getElementById('upload-area').style.display = 'none';
-    const el = document.getElementById('analysis-result');
-    el.style.display = 'block';
-    el.innerHTML = `
-      <div class="info-grid">
-        <div class="info-item"><div class="info-label">文档名称</div><div class="info-value">${meta.doc_name}</div></div>
-        <div class="info-item"><div class="info-label">文档类型</div><div class="info-value highlight">${meta.book_type}</div></div>
-        <div class="info-item"><div class="info-label">格式</div><div class="info-value">${meta.format.toUpperCase()}</div></div>
-        <div class="info-item"><div class="info-label">领域</div><div class="info-value">${(meta.domains||[]).join(', ')}</div></div>
-        <div class="info-item"><div class="info-label">文本块</div><div class="info-value">${meta.filtered_chunks} / ${meta.total_chunks}</div></div>
-        <div class="info-item"><div class="info-label">提取策略</div><div class="info-value highlight">${meta.prompt_type}</div></div>
-      </div>
-      <div style="margin-top:16px; display:flex; gap:12px;">
-        <button class="btn btn-primary" onclick="startPreview()">📋 采样预览（5块）</button>
-        <button class="btn btn-ghost" onclick="startExecute()">⚡ 跳过预览，直接全量</button>
-      </div>
-    `;
-    document.getElementById('phase1').classList.remove('active');
-    document.getElementById('phase1').classList.add('done');
-
-    // 根据 phase 恢复到对应阶段
-    if (phase === 'analyzed') {
-      document.getElementById('phase2').classList.remove('hidden');
-      document.getElementById('phase2').classList.add('active');
-    } else if (phase === 'previewed' || phase === 'extracting' || phase === 'paused' || phase === 'complete') {
-      document.getElementById('phase2').classList.remove('hidden');
-      document.getElementById('phase2').classList.add('done');
-      document.getElementById('phase3').classList.remove('hidden');
-      document.getElementById('phase3').classList.add('active');
-
-      // 显示已有 Skills
-      if (state.skills_preview.length > 0) {
-        const previewEl = document.getElementById('preview-result');
-        previewEl.style.display = 'block';
-        previewEl.innerHTML = state.skills_preview.map(s => `
-          <div class="skill-card">
-            <div class="skill-name">${s.name || '(unnamed)'}</div>
-            <div class="skill-trigger">${s.trigger || ''}</div>
-            <span class="skill-domain">${s.domain || 'general'}</span>
-            <div class="skill-body">${s.body}</div>
-          </div>
-        `).join('');
-      }
-
-      if (phase === 'complete') {
-        const progressEl = document.getElementById('execute-progress');
-        progressEl.style.display = 'block';
-        progressEl.innerHTML = `
-          <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
-          <div class="progress-text">✅ 已完成！💾 ${state.skills_on_disk} Skills</div>
-        `;
-        document.getElementById('phase3').classList.remove('active');
-        document.getElementById('phase3').classList.add('done');
-      } else {
-        // 未完成 → 显示继续按钮
-        const progressEl = document.getElementById('execute-progress');
-        progressEl.style.display = 'block';
-        const pct = state.total_chunks > 0 ? (state.done_chunks/state.total_chunks*100).toFixed(0) : 0;
-        progressEl.innerHTML = `
-          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-          <div class="progress-text">📂 已完成 ${state.done_chunks}/${state.total_chunks} | 💾 ${state.skills_on_disk} Skills</div>
-          <div style="margin-top:12px">
-            <button class="btn btn-primary" onclick="startExecute()">▶️ 从断点继续（剩余 ${state.pending_chunks} 块）</button>
-            <button class="btn btn-ghost" onclick="localStorage.removeItem('pdf2skill_session');location.reload()">🗑️ 放弃，重新开始</button>
-          </div>
-        `;
-      }
-    }
-  } catch (e) {
-    localStorage.removeItem('pdf2skill_session');
-  }
-})();
-
-// 上传
+// ── 上传 ──
 const fileInput = document.getElementById('fileInput');
 const dropzone = document.getElementById('dropzone');
-
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-dropzone.addEventListener('drop', e => {
-  e.preventDefault(); dropzone.classList.remove('dragover');
-  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
-});
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
 
 async function uploadFile(file) {
   document.getElementById('upload-area').style.display = 'none';
   document.getElementById('analysis-loading').style.display = 'flex';
-
-  const formData = new FormData();
-  formData.append('file', file);
-
+  const fd = new FormData(); fd.append('file', file);
   try {
-    const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-    const data = await res.json();
-    sessionId = data.session_id;
+    const r = await fetch('/api/analyze', { method: 'POST', body: fd });
+    const d = await r.json();
+    sessionId = d.session_id;
     localStorage.setItem('pdf2skill_session', sessionId);
-    showAnalysis(data);
-  } catch (err) {
-    alert('分析失败: ' + err.message);
+    showAnalysis(d);
+  } catch (e) {
+    alert('分析失败: ' + e.message);
     document.getElementById('upload-area').style.display = 'block';
     document.getElementById('analysis-loading').style.display = 'none';
   }
@@ -769,204 +868,264 @@ function showAnalysis(data) {
   document.getElementById('analysis-loading').style.display = 'none';
   const el = document.getElementById('analysis-result');
   el.style.display = 'block';
-
-  const typeOptions = ['技术手册', '叙事类', '方法论', '学术教材'].map(t =>
-    `<option value="${t}" ${t === data.book_type ? 'selected' : ''}>${t}</option>`
-  ).join('');
-
-  const promptMap = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor'};
-  const promptOptions = Object.entries(promptMap).map(([label, val]) =>
-    `<option value="${val}" ${val === data.prompt_type ? 'selected' : ''}>${val} (${label})</option>`
-  ).join('');
+  const typeOpts = ['技术手册','叙事类','方法论','学术教材','操作规范'].map(t =>
+    `<option value="${t}" ${t===data.book_type?'selected':''}>${t}</option>`).join('');
+  const pm = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor','操作规范':'extractor'};
+  const promptOpts = Object.entries(pm).map(([l,v]) =>
+    `<option value="${v}" ${v===data.prompt_type?'selected':''}>${v} (${l})</option>`).join('');
+  const cc = (data.core_components||[]).map(c=>`<span class="summary-tag">${c}</span>`).join('');
+  const st = (data.skill_types||[]).map(c=>`<span class="summary-tag green">${c}</span>`).join('');
 
   el.innerHTML = `
     <div class="info-grid">
       <div class="info-item"><div class="info-label">文档名称</div><div class="info-value">${data.doc_name}</div></div>
-      <div class="info-item">
-        <div class="info-label">文档类型 <span style="color:#7c3aed">可调整 ▾</span></div>
-        <select id="sel-book-type" class="setting-select">${typeOptions}</select>
-      </div>
       <div class="info-item"><div class="info-label">格式</div><div class="info-value">${data.format.toUpperCase()}</div></div>
       <div class="info-item"><div class="info-label">领域</div><div class="info-value">${data.domains.join(', ')}</div></div>
       <div class="info-item"><div class="info-label">文本块</div><div class="info-value">${data.filtered_chunks} / ${data.total_chunks}</div></div>
-      <div class="info-item">
-        <div class="info-label">提取策略 <span style="color:#7c3aed">可调整 ▾</span></div>
-        <select id="sel-prompt-type" class="setting-select">${promptOptions}</select>
-      </div>
     </div>
-    <div style="margin-top:16px; display:flex; gap:12px;">
-      <button class="btn btn-primary" onclick="startPreview()">📋 采样预览（5块）</button>
-      <button class="btn btn-ghost" onclick="startExecute()">⚡ 跳过预览，直接全量</button>
-    </div>
-  `;
+    ${(cc||st)?`<div class="summary-section">${cc?`<div class="summary-title">核心组件</div><div class="summary-tags">${cc}</div>`:''}\
+${st?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</div><div class="summary-tags">${st}</div>`:''}</div>`:''}
+    <div class="info-grid" style="margin-top:0">
+      <div class="info-item"><div class="info-label">文档类型 <span style="color:#7c3aed">可调整 ▾</span></div>
+        <select id="sel-book-type" class="setting-select">${typeOpts}</select></div>
+      <div class="info-item"><div class="info-label">提取策略 <span style="color:#7c3aed">可调整 ▾</span></div>
+        <select id="sel-prompt-type" class="setting-select">${promptOpts}</select></div>
+    </div>`;
 
-  // 联动：切换文档类型自动更新提取策略
   document.getElementById('sel-book-type').addEventListener('change', function() {
-    const pm = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor'};
-    document.getElementById('sel-prompt-type').value = pm[this.value] || 'extractor';
-    saveSettings();
+    const m = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor','操作规范':'extractor'};
+    document.getElementById('sel-prompt-type').value = m[this.value]||'extractor'; saveSettings();
   });
   document.getElementById('sel-prompt-type').addEventListener('change', saveSettings);
-
-  document.getElementById('phase1').classList.remove('active');
-  document.getElementById('phase1').classList.add('done');
-  document.getElementById('phase2').classList.remove('hidden');
-  document.getElementById('phase2').classList.add('active');
+  document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
+  document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
+  loadChunkSelector();
 }
 
 async function saveSettings() {
   if (!sessionId) return;
-  await fetch('/api/session/' + sessionId + '/settings', {
-    method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      book_type: document.getElementById('sel-book-type')?.value || '',
-      prompt_type: document.getElementById('sel-prompt-type')?.value || '',
-    }),
+  await fetch('/api/session/'+sessionId+'/settings', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ book_type: document.getElementById('sel-book-type')?.value||'', prompt_type: document.getElementById('sel-prompt-type')?.value||'' })
   });
 }
 
-async function startPreview() {
-  document.getElementById('preview-loading').style.display = 'flex';
-  document.getElementById('preview-result').style.display = 'none';
+// ── 阶段 2：深度调优 ──
+async function loadChunkSelector() {
   try {
-    const res = await fetch('/api/preview/' + sessionId, { method: 'POST' });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`服务端错误 (${res.status}): ${text.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    showPreview(data);
-  } catch (err) {
-    alert('预览失败: ' + err.message);
-  }
-  document.getElementById('preview-loading').style.display = 'none';
+    const r = await fetch('/api/chunks/'+sessionId);
+    const chunks = await r.json();
+    document.getElementById('chunk-select').innerHTML = chunks.map(c =>
+      `<option value="${c.index}">[${c.index}] ${c.heading_path.join(' > ')||'(无标题)'} — ${c.preview}</option>`
+    ).join('');
+  } catch(e) {}
 }
 
-function showPreview(data) {
-  const el = document.getElementById('preview-result');
+async function runTune() {
+  const idx = parseInt(document.getElementById('chunk-select').value);
+  const hint = document.getElementById('prompt-hint').value.trim();
+  document.getElementById('tune-loading').style.display = 'flex';
+  document.getElementById('tune-result').style.display = 'none';
+  try {
+    const r = await fetch('/api/tune/'+sessionId, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ chunk_index: idx, prompt_hint: hint })
+    });
+    showTuneResult(await r.json());
+    loadTuneHistory();
+  } catch(e) { alert('调优失败: '+e.message); }
+  document.getElementById('tune-loading').style.display = 'none';
+}
+
+function showTuneResult(d) {
+  const el = document.getElementById('tune-result');
   el.style.display = 'block';
-
-  let skillsHtml = data.skills.map(s => `
-    <div class="skill-card">
-      <div class="skill-name">${s.name || '(unnamed)'}</div>
-      <div class="skill-trigger">${s.trigger || ''}</div>
-      <span class="skill-domain">${s.domain || 'general'}</span>
-      <div style="font-size:11px; color:#52525b; margin-top:4px">${s.source_context || ''}</div>
-      <div class="skill-body">${s.body}</div>
+  const skills = d.extracted_skills.map(s => `
+    <div class="skill-card" style="border-left:3px solid ${s.status==='failed'?'#ef4444':'#22c55e'}">
+      <div class="skill-name">${s.name||'(unnamed)'}</div>
+      <div class="skill-trigger">${s.trigger||''}</div>
+      <span class="skill-domain">${s.domain||'general'}</span>
+      <span style="font-size:11px;color:${s.status==='failed'?'#f87171':'#4ade80'}">${s.status}</span>
+      <div class="skill-body">${s.body||''}</div>
+    </div>`).join('');
+  el.innerHTML = `<div class="tune-panel">
+    <div class="source-pane">
+      <div class="pane-title"><span class="dot source"></span> 原文 · chunk #${d.chunk_index}</div>
+      <div style="font-size:11px;color:#52525b;margin-bottom:8px">${d.source_context}</div>
+      <div class="source-text">${esc(d.source_text)}</div>
     </div>
-  `).join('');
+    <div class="result-pane">
+      <div class="pane-title"><span class="dot result"></span> 提取结果 · v${d.version} (${d.passed}✅ ${d.failed}❌)</div>
+      ${d.prompt_hint_used?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px">📝 ${esc(d.prompt_hint_used)}</div>`:''}
+      ${skills||'<div style="color:#71717a">EMPTY_BLOCK — 无可提取内容</div>'}
+    </div>
+  </div>`;
+}
 
+async function loadTuneHistory() {
+  try {
+    const r = await fetch('/api/tune-history/'+sessionId);
+    const h = await r.json();
+    if (!h.length) return;
+    window._th = h;
+    const wrap = document.getElementById('version-timeline-wrap');
+    wrap.style.display = 'block';
+    document.getElementById('version-timeline').innerHTML = h.map(v =>
+      `<div class="version-chip" onclick="replayV(${v.version-1})" title="${v.timestamp}">v${v.version} · #${v.chunk_index}</div>`
+    ).join('');
+  } catch(e) {}
+}
+
+function replayV(i) {
+  const v = window._th?.[i]; if (!v) return;
+  document.getElementById('prompt-hint').value = v.prompt_hint||'';
+  document.getElementById('chunk-select').value = v.chunk_index;
+  const skills = (v.extracted_skills||[]).map(s => `
+    <div class="skill-card" style="border-left:3px solid ${s.status==='failed'?'#ef4444':'#22c55e'}">
+      <div class="skill-name">${s.name||'(unnamed)'}</div>
+      <div class="skill-trigger">${s.trigger||''}</div>
+      <span class="skill-domain">${s.domain||'general'}</span>
+      <div class="skill-body">${s.body||''}</div>
+    </div>`).join('');
+  const el = document.getElementById('tune-result');
+  el.style.display = 'block';
+  el.innerHTML = `<div class="tune-panel">
+    <div class="source-pane"><div class="pane-title"><span class="dot source"></span> 原文快照 #${v.chunk_index}</div>
+      <div class="source-text">${esc(v.source_text_preview||'')}</div></div>
+    <div class="result-pane"><div class="pane-title"><span class="dot result"></span> v${v.version} 历史回放</div>
+      ${v.prompt_hint?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px">📝 ${esc(v.prompt_hint)}</div>`:''}
+      ${skills||'<div style="color:#71717a">无结果</div>'}</div>
+  </div>`;
+  document.querySelectorAll('.version-chip').forEach((c,j) => c.classList.toggle('active', j===i));
+}
+
+// ── 阶段 3：抽样验证 ──
+function goToSampleCheck() {
+  document.getElementById('phase2').classList.remove('active'); document.getElementById('phase2').classList.add('done');
+  document.getElementById('phase3').classList.remove('hidden'); document.getElementById('phase3').classList.add('active');
+}
+
+async function runSampleCheck() {
+  document.getElementById('sample-loading').style.display = 'flex';
+  document.getElementById('sample-result').style.display = 'none';
+  try {
+    const r = await fetch('/api/sample-check/'+sessionId, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sample_size:5})
+    });
+    showSampleResult(await r.json());
+  } catch(e) { alert('抽样失败: '+e.message); }
+  document.getElementById('sample-loading').style.display = 'none';
+}
+
+function showSampleResult(d) {
+  const el = document.getElementById('sample-result');
+  el.style.display = 'block';
+  const items = d.results.map(r => {
+    const hp = r.skills.some(s=>s.status==='pass');
+    const tags = r.skills.map(s =>
+      `<span class="sample-skill-tag ${s.status==='failed'?'fail':''}">${s.name||'?'} ${s.status==='pass'?'✅':'❌'}</span>`).join('');
+    return `<div class="sample-item ${hp?'pass':'fail'}">
+      <div class="sample-heading">#${r.chunk_index} · ${r.heading_path.join(' > ')||'(无标题)'}</div>
+      <div class="sample-preview">${esc(r.source_preview)}</div>
+      <div class="sample-skills">${tags||'<span style="color:#71717a">EMPTY</span>'}</div>
+    </div>`;
+  }).join('');
   el.innerHTML = `
     <div class="info-grid">
-      <div class="info-item"><div class="info-label">采样块数</div><div class="info-value">${data.sample_chunks}</div></div>
-      <div class="info-item"><div class="info-label">提取到</div><div class="info-value">${data.raw_skills} Raw</div></div>
-      <div class="info-item"><div class="info-label">通过校验</div><div class="info-value highlight">${data.passed}</div></div>
-      <div class="info-item"><div class="info-label">失败</div><div class="info-value">${data.failed}</div></div>
+      <div class="info-item"><div class="info-label">抽样数</div><div class="info-value">${d.sample_size}</div></div>
+      <div class="info-item"><div class="info-label">提取到</div><div class="info-value">${d.total_raw} Raw</div></div>
+      <div class="info-item"><div class="info-label">通过率</div><div class="info-value highlight">${d.pass_rate}%</div></div>
+      <div class="info-item"><div class="info-label">Hint</div><div class="info-value" style="font-size:12px">${d.prompt_hint_used||'(无)'}</div></div>
     </div>
-    <h3 style="margin:16px 0 8px; font-size:15px; color:#a1a1aa;">样本 Skill 预览</h3>
-    ${skillsHtml}
-    <div style="margin-top:16px; display:flex; gap:12px;">
-      <button class="btn btn-primary" onclick="startExecute()">✅ 确认方向，全量执行</button>
-      <button class="btn btn-ghost" onclick="startPreview()">🔄 重新采样</button>
-    </div>
-  `;
+    ${items}
+    <div style="margin-top:16px;display:flex;gap:12px">
+      <button class="btn btn-primary" onclick="goToExecute()">✅ 通过，开始全量</button>
+      <button class="btn btn-ghost" onclick="runSampleCheck()">🔄 再抽一批</button>
+      <button class="btn btn-ghost" onclick="backToTune()">↩ 返回调优</button>
+    </div>`;
+}
 
-  document.getElementById('phase2').classList.remove('active');
-  document.getElementById('phase2').classList.add('done');
-  document.getElementById('phase3').classList.remove('hidden');
-  document.getElementById('phase3').classList.add('active');
+function backToTune() {
+  document.getElementById('phase3').classList.remove('active'); document.getElementById('phase3').classList.add('hidden');
+  document.getElementById('phase2').classList.remove('done'); document.getElementById('phase2').classList.add('active');
+}
+
+// ── 阶段 4：全量执行 ──
+function goToExecute() {
+  document.getElementById('phase2').classList.remove('active'); document.getElementById('phase2').classList.add('done');
+  document.getElementById('phase3').classList.remove('active'); document.getElementById('phase3').classList.add('done');
+  document.getElementById('phase4').classList.remove('hidden'); document.getElementById('phase4').classList.add('active');
+  startExecute();
 }
 
 function startExecute() {
-  // 确保阶段三可见
-  document.getElementById('phase2').classList.remove('active');
-  document.getElementById('phase2').classList.add('done');
-  document.getElementById('phase3').classList.remove('hidden');
-  document.getElementById('phase3').classList.add('active');
-
-  const progressEl = document.getElementById('execute-progress');
-  progressEl.style.display = 'block';
-  progressEl.innerHTML = `
-    <div class="progress-bar"><div class="progress-fill" id="pbar"></div></div>
-    <div class="progress-text" id="ptext">准备中...</div>
-  `;
-
-  const source = new EventSource('/api/execute/' + sessionId);
-
-  source.addEventListener('phase', (e) => {
+  const p = document.getElementById('execute-progress');
+  p.style.display = 'block';
+  p.innerHTML = `<div class="progress-bar"><div class="progress-fill" id="pbar"></div></div><div class="progress-text" id="ptext">准备中...</div>`;
+  const src = new EventSource('/api/execute/'+sessionId);
+  src.addEventListener('phase', e => {
     const d = JSON.parse(e.data);
     document.getElementById('ptext').textContent = d.message;
-    // 断点续传：设置初始进度条位置
-    if (d.done && d.total) {
-      document.getElementById('pbar').style.width = (d.done/d.total*100)+'%';
-    }
+    if (d.done && d.total) document.getElementById('pbar').style.width = (d.done/d.total*100)+'%';
   });
-
-  source.addEventListener('progress', (e) => {
+  src.addEventListener('progress', e => {
     const d = JSON.parse(e.data);
-    const pct = (d.completed / d.total * 100).toFixed(0);
-    document.getElementById('pbar').style.width = pct + '%';
-    const eta = d.eta_s > 60 ? (d.eta_s/60).toFixed(0)+'m' : d.eta_s.toFixed(0)+'s';
-    document.getElementById('ptext').textContent =
-      `${d.completed}/${d.total} (${pct}%) | ` +
-      `💾 ${d.skills_on_disk || 0} Skills | ⏱${d.elapsed_s.toFixed(0)}s ETA ${eta}`;
-
-    // 流式展示最新 Skill
-    const stream = document.getElementById('skill-stream');
-    if (d.latest_skills) {
-      d.latest_skills.forEach(s => {
-        const card = document.createElement('div');
-        card.className = 'skill-card';
-        card.innerHTML = `<div class="skill-body">${s.name}</div>`;
-        stream.prepend(card);
-      });
-    }
+    const pct = (d.completed/d.total*100).toFixed(0);
+    document.getElementById('pbar').style.width = pct+'%';
+    const eta = d.eta_s>60?(d.eta_s/60).toFixed(0)+'m':d.eta_s.toFixed(0)+'s';
+    document.getElementById('ptext').textContent = `${d.completed}/${d.total} (${pct}%) | 💾 ${d.skills_on_disk||0} Skills | ⏱${d.elapsed_s.toFixed(0)}s ETA ${eta}`;
   });
-
-  source.addEventListener('validation', (e) => {
-    const d = JSON.parse(e.data);
-    document.getElementById('ptext').textContent =
-      `校验完成：✅${d.passed} ❌${d.failed}`;
-  });
-
-  source.addEventListener('complete', (e) => {
-    source.close();
+  src.addEventListener('complete', e => {
+    src.close();
     const d = JSON.parse(e.data);
     document.getElementById('pbar').style.width = '100%';
-    const resultEl = document.getElementById('execute-result');
-    resultEl.style.display = 'block';
-
-    let skillsHtml = d.skills.map(s => `
-      <div class="skill-card">
-        <div class="skill-name">${s.name || '(unnamed)'}</div>
-        <div class="skill-trigger">${s.trigger || ''}</div>
-        <span class="skill-domain">${s.domain || 'general'}</span>
-        <div class="skill-body">${s.body}</div>
-      </div>
-    `).join('');
-
-    resultEl.innerHTML = `
-      <div class="info-grid" style="margin-top:16px">
-        <div class="info-item"><div class="info-label">最终 Skill</div><div class="info-value highlight">${d.final_skills}</div></div>
-        <div class="info-item"><div class="info-label">耗时</div><div class="info-value">${d.elapsed_s}s</div></div>
-        <div class="info-item"><div class="info-label">输出目录</div><div class="info-value">${d.output_dir}</div></div>
-      </div>
-      <h3 style="margin:16px 0 8px; font-size:15px; color:#a1a1aa;">最终 Skill 列表</h3>
-      ${skillsHtml}
-    `;
-
-    document.getElementById('phase3').classList.remove('active');
-    document.getElementById('phase3').classList.add('done');
-    document.getElementById('ptext').textContent =
-      `✅ 完成！${d.final_skills} Skills → ${d.output_dir}`;
+    const r = document.getElementById('execute-result');
+    r.style.display = 'block';
+    const skills = (d.skills||[]).map(s => `<div class="skill-card"><div class="skill-name">${s.name}</div><div class="skill-trigger">${s.trigger}</div><span class="skill-domain">${s.domain}</span><div class="skill-body">${s.body}</div></div>`).join('');
+    r.innerHTML = `<div class="info-grid" style="margin-top:16px">
+      <div class="info-item"><div class="info-label">最终 Skill</div><div class="info-value highlight">${d.final_skills}</div></div>
+      <div class="info-item"><div class="info-label">耗时</div><div class="info-value">${d.elapsed_s}s</div></div>
+      <div class="info-item"><div class="info-label">输出目录</div><div class="info-value">${d.output_dir}</div></div>
+    </div><h3 style="margin:16px 0 8px;font-size:15px;color:#a1a1aa">最终 Skill 列表</h3>${skills}`;
+    document.getElementById('phase4').classList.remove('active'); document.getElementById('phase4').classList.add('done');
+    document.getElementById('ptext').textContent = `✅ 完成！${d.final_skills} Skills → ${d.output_dir}`;
   });
-
-  source.onerror = () => {
-    source.close();
-    document.getElementById('ptext').textContent = '❌ 连接中断';
-  };
+  src.onerror = () => { src.close(); document.getElementById('ptext').textContent = '❌ 连接中断'; };
 }
+
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── 页面恢复 ──
+(async function() {
+  if (!sessionId) return;
+  try {
+    const r = await fetch('/api/session/'+sessionId+'/state');
+    if (!r.ok) { localStorage.removeItem('pdf2skill_session'); return; }
+    const st = await r.json();
+    const m = st.meta;
+    document.getElementById('upload-area').style.display = 'none';
+    const el = document.getElementById('analysis-result');
+    el.style.display = 'block';
+    const cc = (m.core_components||[]).map(c=>`<span class="summary-tag">${c}</span>`).join('');
+    const stags = (m.skill_types||[]).map(c=>`<span class="summary-tag green">${c}</span>`).join('');
+    el.innerHTML = `<div class="info-grid">
+      <div class="info-item"><div class="info-label">文档名称</div><div class="info-value">${m.doc_name}</div></div>
+      <div class="info-item"><div class="info-label">格式</div><div class="info-value">${m.format.toUpperCase()}</div></div>
+      <div class="info-item"><div class="info-label">领域</div><div class="info-value">${(m.domains||[]).join(', ')}</div></div>
+      <div class="info-item"><div class="info-label">文本块</div><div class="info-value">${m.filtered_chunks} / ${m.total_chunks}</div></div>
+    </div>
+    ${(cc||stags)?`<div class="summary-section">${cc?`<div class="summary-title">核心组件</div><div class="summary-tags">${cc}</div>`:''}\
+${stags?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</div><div class="summary-tags">${stags}</div>`:''}</div>`:''}
+    <div class="info-grid" style="margin-top:0">
+      <div class="info-item"><div class="info-label">文档类型</div><div class="info-value highlight">${m.book_type}</div></div>
+      <div class="info-item"><div class="info-label">提取策略</div><div class="info-value highlight">${m.prompt_type}</div></div>
+    </div>`;
+    document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
+    document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
+    loadChunkSelector();
+    loadTuneHistory();
+  } catch(e) { localStorage.removeItem('pdf2skill_session'); }
+})();
 </script>
 </body>
 </html>"""
