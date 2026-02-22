@@ -24,6 +24,20 @@ class ValidationStatus(Enum):
     FAIL_HALLUCINATION = "fail_hallucination"
 
 
+class SKUType(Enum):
+    """知识单元类型"""
+
+    FACTUAL = "factual"          # 事实型：人物档案、数据、事件、设定
+    PROCEDURAL = "procedural"    # 程序型：流程、策略、战术、操作规范
+    RELATIONAL = "relational"    # 关系型：标签树、派系网络、术语表
+
+
+def _slugify(name: str) -> str:
+    """将 name 转为 url-safe 的 sku_id"""
+    slug = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", "-", name).strip("-").lower()
+    return slug[:60] or "unnamed"
+
+
 @dataclass
 class RawSkill:
     """R1 提取的原始 Skill（未校验）"""
@@ -36,7 +50,7 @@ class RawSkill:
 
 @dataclass
 class ValidatedSkill:
-    """校验通过的 Skill"""
+    """校验通过的 Skill（知识单元 SKU）"""
 
     # Frontmatter 字段
     name: str
@@ -57,6 +71,13 @@ class ValidatedSkill:
     source_chunk_index: int = 0
     source_context: str = ""
     prompt_version: str = "v0.1"
+    # SKU 分类（Phase 1 新增，向后兼容）
+    sku_type: SKUType = SKUType.PROCEDURAL
+    sku_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.sku_id and self.name:
+            self.sku_id = _slugify(self.name)
 
 
 # ──── YAML Frontmatter 解析 ────
