@@ -592,16 +592,23 @@ async def execute_full(request: Request, session_id: str):
         )
 
         all_skills_data = fs.load_skills()
+        # 统计 SKU 分布
+        sku_stats = {}
+        for s in all_skills_data:
+            st = s.get("sku_type", "procedural")
+            sku_stats[st] = sku_stats.get(st, 0) + 1
         yield {
             "event": "complete",
             "data": json.dumps({
                 "final_skills": len(all_skills_data),
                 "output_dir": f"sessions/{session_id}/skills/",
+                "sku_stats": sku_stats,
                 "skills": [
                     {
                         "name": s.get("name", ""),
                         "trigger": s.get("trigger", ""),
                         "domain": s.get("domain", ""),
+                        "sku_type": s.get("sku_type", "procedural"),
                         "body": s.get("body", "")[:300],
                     }
                     for s in all_skills_data[:30]
@@ -1184,11 +1191,13 @@ function startExecute() {
     const d = JSON.parse(e.data);
     document.getElementById('pbar').style.width = '100%';
     document.getElementById('ptext').textContent = '✅ 完成！'+d.final_skills+' Skills → '+d.output_dir;
+    const skuInfo = d.sku_stats ? ' | 📋'+( d.sku_stats.factual||0)+' 事实 ⚙️'+(d.sku_stats.procedural||0)+' 程序 🔗'+(d.sku_stats.relational||0)+' 关系' : '';
+    const typeColors = {factual:'#3b82f6',procedural:'#22c55e',relational:'#f59e0b'};
     const skills = (d.skills||[]).map(s =>
-      '<div class="skill-card"><div class="skill-name">'+esc(s.name)+'</div><div class="skill-trigger">'+esc(s.trigger)+'</div><span class="skill-domain">'+esc(s.domain)+'</span><div class="skill-body">'+esc(s.body)+'</div></div>'
+      '<div class="skill-card"><div class="skill-name">'+esc(s.name)+'</div><div class="skill-trigger">'+esc(s.trigger)+'</div><span class="skill-domain">'+esc(s.domain)+'</span> <span style="padding:2px 8px;border-radius:4px;font-size:11px;background:'+(typeColors[s.sku_type]||'#666')+'20;color:'+(typeColors[s.sku_type]||'#aaa')+'">'+esc(s.sku_type||'')+'</span><div class="skill-body">'+esc(s.body)+'</div></div>'
     ).join('');
     document.getElementById('execute-result').innerHTML =
-      '<div style="margin-top:8px"><span class="val hl">'+d.final_skills+' Skills</span> · '+d.elapsed_s+'s · '+d.output_dir+'</div>' + skills;
+      '<div style="margin-top:8px"><span class="val hl">'+d.final_skills+' SKUs</span> · '+d.elapsed_s+'s'+skuInfo+'</div>' + skills;
   });
   src.onerror = () => { src.close(); document.getElementById('ptext').textContent = '❌ 连接中断'; };
 }

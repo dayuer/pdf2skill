@@ -21,10 +21,11 @@ from .llm_client import AsyncDeepSeekClient, DeepSeekClient
 from .markdown_chunker import ChunkResult, chunk_markdown
 from .semantic_filter import filter_chunks
 from .schema_generator import SkillSchema, generate_schema
+from .sku_classifier import classify_batch
 from .skill_extractor import extract_skills_batch
 from .skill_packager import package_skills
 from .skill_reducer import cluster_skills, reduce_all_clusters
-from .skill_validator import SkillValidator, ValidatedSkill
+from .skill_validator import SkillValidator, SKUType, ValidatedSkill
 
 
 @dataclass
@@ -52,6 +53,8 @@ class PipelineResult:
     # Schema 信息
     book_type: str = ""
     domains: list[str] = field(default_factory=list)
+    # SKU 分类统计
+    sku_stats: dict[str, int] = field(default_factory=dict)
 
     def summary(self) -> str:
         """生成执行摘要"""
@@ -61,6 +64,7 @@ class PipelineResult:
             f"🔍 提取：{self.raw_skills_count} 个 Raw Skill → {self.valid_skills_count} 个通过校验",
             f"❌ 校验失败：{self.failed_skills_count} 个",
             f"🔗 去重聚类：{self.clusters_count} 簇 → {self.final_skills_count} 个 Final Skill",
+            f"📊 SKU 分布：{self.sku_stats}",
             f"📦 输出目录：{self.output_dir}",
             f"⏱️ 总耗时：{self.elapsed_seconds:.1f}s",
         ]
@@ -270,6 +274,17 @@ async def run_pipeline_async(
 
     result.final_skills_count = len(final_skills)
     timings["去重合并"] = time.monotonic() - t0
+
+    # ── Phase 3.5：SKU 分类 ──
+    t0 = time.monotonic()
+    print(f"🏷️ SKU 分类...")
+    final_skills = classify_batch(final_skills)
+    sku_stats = {}
+    for s in final_skills:
+        sku_stats[s.sku_type.value] = sku_stats.get(s.sku_type.value, 0) + 1
+    result.sku_stats = sku_stats
+    print(f"  📋 factual: {sku_stats.get('factual', 0)} | ⚙️ procedural: {sku_stats.get('procedural', 0)} | 🔗 relational: {sku_stats.get('relational', 0)}")
+    timings["SKU分类"] = time.monotonic() - t0
 
     # ── Phase 4：打包输出 ──
     t0 = time.monotonic()
