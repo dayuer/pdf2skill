@@ -155,6 +155,74 @@ def _resolve_prompt_type(book_type: str) -> tuple[str, str]:
     return _DEFAULT_PROMPT
 
 
+# ──── 基线 Prompt Hint 生成 ────
+
+_BASELINE_HINTS: dict[str, str] = {
+    "技术手册": (
+        "## 提取策略\n"
+        "1. 提取每个操作步骤的完整流程（前置条件 → 操作 → 预期结果）\n"
+        "2. 保留所有参数值、阈值、配置项，严禁省略数字\n"
+        "3. 表格数据转为键值对结构\n"
+        "4. 忽略版权声明、作者简介、广告内容"
+    ),
+    "叙事类": (
+        "## 提取策略\n"
+        "1. 聚焦关键事件和决策节点，忽略日常描写和过渡段落\n"
+        "2. 提取人物动机、决策逻辑和因果链\n"
+        "3. 标注事件在故事时间线中的位置\n"
+        "4. 忽略纯情感描写和环境铺垫"
+    ),
+    "方法论": (
+        "## 提取策略\n"
+        "1. 提取可复用的思维模型和框架结构\n"
+        "2. 区分：原则（why）→ 方法（what）→ 步骤（how）\n"
+        "3. 保留适用条件和边界约束\n"
+        "4. 忽略案例中的细节故事，只保留方法论本身"
+    ),
+    "学术教材": (
+        "## 提取策略\n"
+        "1. 提取概念定义：术语 + 定义 + 前置知识\n"
+        "2. 提取核心原理：公式、定理、推导过程\n"
+        "3. 保留具体数值和参数\n"
+        "4. 忽略练习题、习题答案和索引"
+    ),
+    "操作规范": (
+        "## 提取策略\n"
+        "1. 提取每条规范的完整描述（编号 + 条文 + 适用范围）\n"
+        "2. 保留判定标准和阈值\n"
+        "3. 提取条件分支：IF 条件 THEN 处理方式\n"
+        "4. 忽略法律声明和附录"
+    ),
+}
+
+
+def generate_baseline_hint(book_type: str) -> str:
+    """根据文档类型生成基线 prompt_hint"""
+    if book_type in _BASELINE_HINTS:
+        return _BASELINE_HINTS[book_type]
+
+    # 模糊匹配
+    bt = book_type.lower()
+    if any(kw in bt for kw in ("叙事", "小说", "故事")):
+        return _BASELINE_HINTS["叙事类"]
+    if any(kw in bt for kw in ("方法", "框架")):
+        return _BASELINE_HINTS["方法论"]
+    if any(kw in bt for kw in ("教材", "学术")):
+        return _BASELINE_HINTS["学术教材"]
+
+    return _BASELINE_HINTS["技术手册"]
+
+
+def get_system_prompt_preview(
+    book_type: str,
+    schema_constraint: str,
+    prompt_version: str = "v0.1",
+) -> str:
+    """返回完整的 system prompt（用于前端展示）"""
+    prompt_name, _ = _resolve_prompt_type(book_type)
+    return _load_system_prompt(prompt_name, prompt_version, schema_constraint)
+
+
 def _load_system_prompt(
     prompt_type: str, version: str, schema_constraint: str
 ) -> str:

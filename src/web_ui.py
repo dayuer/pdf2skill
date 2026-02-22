@@ -30,7 +30,10 @@ from .llm_client import AsyncDeepSeekClient, DeepSeekClient
 from .markdown_chunker import chunk_markdown, ChunkResult, TextChunk
 from .schema_generator import SkillSchema, generate_schema
 from .semantic_filter import filter_chunks
-from .skill_extractor import extract_skills_batch, extract_skill_from_chunk, _resolve_prompt_type
+from .skill_extractor import (
+    extract_skills_batch, extract_skill_from_chunk, _resolve_prompt_type,
+    generate_baseline_hint, get_system_prompt_preview,
+)
 from .skill_validator import SkillValidator, ValidatedSkill, RawSkill
 from .skill_reducer import cluster_skills, reduce_all_clusters
 from .skill_packager import package_skills
@@ -121,6 +124,10 @@ async def analyze_document(file: UploadFile = File(...)):
         "schema_constraint": schema.to_prompt_constraint()[:500],
         "core_components": schema.fields.get("core_components", []),
         "skill_types": schema.fields.get("skill_types", []),
+        "baseline_hint": generate_baseline_hint(schema.book_type),
+        "system_prompt": get_system_prompt_preview(
+            schema.book_type, schema.to_prompt_constraint()
+        ),
     }
 
 
@@ -156,25 +163,74 @@ async def update_session_settings(session_id: str, request: Request):
     return {"ok": True, "book_type": new_book_type, "prompt_type": new_prompt_type}
 
 
+@app.get("/api/prompt-preview/{session_id}")
+async def prompt_preview(session_id: str):
+    """返回当前的完整 system prompt + 基线 hint，用于前端展示。"""
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    schema = _get_schema(session_id, fs)
+    book_type = meta.get("book_type", "技术手册")
+    constraint = schema.to_prompt_constraint() if schema else ""
+
+    return {
+        "system_prompt": get_system_prompt_preview(book_type, constraint),
+        "baseline_hint": generate_baseline_hint(book_type),
+        "book_type": book_type,
+        "prompt_type": meta.get("prompt_type", ""),
+    }
+
+
 # ──── 阶段 2：深度调优 API ────
 
 
 @app.get("/api/chunks/{session_id}")
-async def list_chunks(session_id: str):
-    """返回所有 chunk 的摘要列表，用于 chunk 选择器。"""
+async def list_chunks(session_id: str, request: Request):
+    """
+    返回 chunk 摘要列表，支持分页 + 搜索 + 随机推荐。
+    参数: page=1, page_size=20, q=搜索关键词, recommend=true（随机推荐5个）
+    """
     fs = FileSession(session_id)
     chunks = fs.load_chunks()
     if not chunks:
         return JSONResponse({"error": "无 chunk 数据"}, status_code=404)
-    return [
-        {
-            "index": c.index,
-            "heading_path": c.heading_path,
-            "char_count": c.char_count,
-            "preview": c.content[:80].replace("\n", " "),
-        }
-        for c in chunks
-    ]
+
+    params = request.query_params
+    q = params.get("q", "").strip()
+    recommend = params.get("recommend", "").lower() == "true"
+    page = int(params.get("page", "1"))
+    page_size = int(params.get("page_size", "20"))
+
+    filtered = chunks
+    if q:
+        filtered = [c for c in chunks if q in c.content or q in " > ".join(c.heading_path)]
+
+    if recommend:
+        # 随机推荐：均匀分布取 5 个代表性 chunk
+        step = max(len(filtered) // 5, 1)
+        filtered = filtered[::step][:5]
+        page, page_size = 1, len(filtered)
+
+    total = len(filtered)
+    start = (page - 1) * page_size
+    page_items = filtered[start:start + page_size]
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                "index": c.index,
+                "heading_path": c.heading_path,
+                "char_count": c.char_count,
+                "preview": c.content[:100].replace("\n", " "),
+            }
+            for c in page_items
+        ],
+    }
 
 
 @app.post("/api/tune/{session_id}")
@@ -798,14 +854,22 @@ _HTML_PAGE = """<!DOCTYPE html>
   <div id="phase2" class="phase-card hidden">
     <div class="phase-header"><div class="phase-number">2</div><div class="phase-title">深度调优 · 原文对比</div></div>
     <div id="tune-controls">
-      <label style="font-size:13px; color:#71717a;">选择文本块</label>
-      <select id="chunk-select" class="chunk-select"></select>
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px">
+        <label style="font-size:13px; color:#71717a; white-space:nowrap">选择文本块</label>
+        <input id="chunk-search" class="chunk-select" style="flex:1" placeholder="搜索关键词…（留空使用系统推荐）" oninput="searchChunks()">
+        <span id="chunk-total" style="font-size:12px; color:#52525b; white-space:nowrap"></span>
+      </div>
+      <select id="chunk-select" class="chunk-select" size="5" style="height:auto; min-height:80px"></select>
     </div>
+    <details id="prompt-details" style="margin:12px 0">
+      <summary style="font-size:12px; color:#7c3aed; cursor:pointer; user-select:none">🔍 查看当前系统 Prompt（点击展开）</summary>
+      <div id="system-prompt-display" class="source-text" style="background:#1f1f23; padding:12px; border-radius:8px; margin-top:8px; max-height:300px; overflow-y:auto; font-size:12px"></div>
+    </details>
     <div id="tune-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在提取...</span></div>
     <div id="tune-result" style="display:none"></div>
     <div style="margin-top:12px">
-      <label style="font-size:13px; color:#71717a;">Prompt 调优方向（可选）</label>
-      <textarea id="prompt-hint" class="tune-textarea" placeholder="例：只保留可操作的步骤，去掉背景描述和作者观点"></textarea>
+      <label style="font-size:13px; color:#71717a">Prompt 调优方向（系统已根据文档类型预填基线策略，可修改）</label>
+      <textarea id="prompt-hint" class="tune-textarea" placeholder="加载中..."></textarea>
       <div style="margin-top:10px; display:flex; gap:12px; align-items:center;">
         <button class="btn btn-primary" onclick="runTune()">🔬 提取并对比</button>
         <button class="btn btn-ghost btn-sm" onclick="goToSampleCheck()">✅ 调优完成，进入抽样验证</button>
@@ -899,6 +963,16 @@ ${st?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</
   document.getElementById('sel-prompt-type').addEventListener('change', saveSettings);
   document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
   document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
+
+  // 预填 baseline hint
+  if (data.baseline_hint) {
+    document.getElementById('prompt-hint').value = data.baseline_hint;
+  }
+  // 展示 system prompt
+  if (data.system_prompt) {
+    document.getElementById('system-prompt-display').textContent = data.system_prompt;
+  }
+
   loadChunkSelector();
 }
 
@@ -911,14 +985,25 @@ async function saveSettings() {
 }
 
 // ── 阶段 2：深度调优 ──
-async function loadChunkSelector() {
+let _searchTimer = null;
+async function loadChunkSelector(q) {
   try {
-    const r = await fetch('/api/chunks/'+sessionId);
-    const chunks = await r.json();
-    document.getElementById('chunk-select').innerHTML = chunks.map(c =>
+    const params = q ? `?q=${encodeURIComponent(q)}` : '?recommend=true';
+    const r = await fetch('/api/chunks/'+sessionId+params);
+    const data = await r.json();
+    const sel = document.getElementById('chunk-select');
+    document.getElementById('chunk-total').textContent = `共 ${data.total} 块`;
+    sel.innerHTML = data.items.map(c =>
       `<option value="${c.index}">[${c.index}] ${c.heading_path.join(' > ')||'(无标题)'} — ${c.preview}</option>`
     ).join('');
   } catch(e) {}
+}
+function searchChunks() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    const q = document.getElementById('chunk-search').value.trim();
+    loadChunkSelector(q || undefined);
+  }, 300);
 }
 
 async function runTune() {
@@ -1124,6 +1209,18 @@ ${stags?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类�
     document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
     loadChunkSelector();
     loadTuneHistory();
+
+    // 加载 prompt preview（baseline hint + system prompt）
+    try {
+      const pr = await fetch('/api/prompt-preview/'+sessionId);
+      if (pr.ok) {
+        const pp = await pr.json();
+        if (pp.baseline_hint && !document.getElementById('prompt-hint').value) {
+          document.getElementById('prompt-hint').value = pp.baseline_hint;
+        }
+        document.getElementById('system-prompt-display').textContent = pp.system_prompt || '';
+      }
+    } catch(e) {}
   } catch(e) { localStorage.removeItem('pdf2skill_session'); }
 })();
 </script>
