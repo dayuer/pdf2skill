@@ -699,155 +699,172 @@ _HTML_PAGE = """<!DOCTYPE html>
     font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
     background: #0a0a0f; color: #e4e4e7; min-height: 100vh;
   }
-  .container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
-  h1 {
-    font-size: 32px; font-weight: 700;
+  /* ── 顶栏 ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid #27272a;
+    background: #111114;
+  }
+  .topbar h1 {
+    font-size: 22px; font-weight: 700;
     background: linear-gradient(135deg, #7c3aed, #06b6d4);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    margin-bottom: 8px;
   }
-  .subtitle { color: #71717a; font-size: 14px; margin-bottom: 32px; }
+  .topbar-info { display: flex; align-items: center; gap: 16px; font-size: 13px; color: #71717a; }
+  .topbar-info .tag { padding: 2px 10px; border-radius: 6px; background: #27272a; color: #a1a1aa; font-size: 12px; }
+  .topbar-info .tag.active { background: rgba(124,58,237,0.2); color: #c084fc; }
 
-  .phase-card {
-    background: #18181b; border: 1px solid #27272a;
-    border-radius: 16px; padding: 24px; margin-bottom: 20px;
-    transition: all 0.3s;
-  }
-  .phase-card.active { border-color: #7c3aed; box-shadow: 0 0 20px rgba(124,58,237,0.15); }
-  .phase-card.done { border-color: #22c55e; opacity: 0.85; }
-  .phase-card.hidden { display: none; }
-  .phase-card.collapsed > *:not(.phase-header) { display: none !important; }
-  .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; position: relative; }
-  .phase-toggle {
-    position: absolute; right: 0; top: 0;
-    background: none; border: none; color: #71717a; font-size: 18px;
-    cursor: pointer; padding: 4px 8px; transition: transform 0.2s;
-  }
-  .phase-toggle:hover { color: #c084fc; }
-  .phase-card.collapsed .phase-toggle { transform: rotate(180deg); }
-  .phase-card.collapsed .phase-header { margin-bottom: 0; }
-  .phase-number {
-    width: 32px; height: 32px; border-radius: 50%;
-    background: #27272a; color: #71717a;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 14px;
-  }
-  .phase-card.active .phase-number { background: #7c3aed; color: #fff; }
-  .phase-card.done .phase-number { background: #22c55e; color: #fff; }
-  .phase-title { font-size: 18px; font-weight: 600; }
+  /* ── 主体布局 ── */
+  .main { display: flex; height: calc(100vh - 57px); }
+  .panel { overflow-y: auto; padding: 20px; }
+  .left { width: 42%; border-right: 1px solid #27272a; display: flex; flex-direction: column; }
+  .right { flex: 1; display: flex; flex-direction: column; }
 
+  /* ── 上传区 ── */
   .upload-zone {
-    border: 2px dashed #3f3f46; border-radius: 12px;
-    padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s;
+    border: 2px dashed #3f3f46; border-radius: 12px; padding: 40px;
+    text-align: center; cursor: pointer; transition: all 0.3s;
+    margin: 20px;
   }
   .upload-zone:hover { border-color: #7c3aed; background: rgba(124,58,237,0.05); }
-  .upload-zone.dragover { border-color: #7c3aed; background: rgba(124,58,237,0.1); }
-  .upload-icon { font-size: 48px; margin-bottom: 12px; }
-  .upload-text { color: #a1a1aa; font-size: 14px; }
+  .upload-icon { font-size: 40px; margin-bottom: 12px; }
+  .upload-text { color: #71717a; font-size: 14px; }
   input[type=file] { display: none; }
 
-  .info-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px; margin: 16px 0;
+  /* ── 文档摘要 ── */
+  .doc-summary {
+    padding: 12px 16px; background: #18181b; border-radius: 10px;
+    margin: 0 0 12px; font-size: 13px; border: 1px solid #27272a;
   }
-  .info-item { background: #1f1f23; border-radius: 8px; padding: 12px; }
-  .info-label { color: #71717a; font-size: 12px; margin-bottom: 4px; }
-  .info-value { font-size: 16px; font-weight: 600; }
-  .info-value.highlight { color: #7c3aed; }
+  .doc-summary .row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  .doc-summary .label { color: #71717a; }
+  .doc-summary .val { color: #e4e4e7; font-weight: 500; }
+  .doc-summary .val.hl { color: #c084fc; }
+  .summary-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .summary-tag { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(124,58,237,0.12); color: #c084fc; }
+  .summary-tag.green { background: rgba(34,197,94,0.12); color: #4ade80; }
 
-  .summary-section {
-    background: #1f1f23; border-radius: 10px; padding: 14px 16px;
-    margin: 12px 0 4px; border-left: 3px solid #7c3aed;
-  }
-  .summary-section .summary-title { font-size: 12px; color: #71717a; margin-bottom: 8px; font-weight: 600; }
-  .summary-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .summary-tag { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 12px; background: rgba(124,58,237,0.15); color: #c084fc; }
-  .summary-tag.green { background: rgba(34,197,94,0.15); color: #4ade80; }
-
+  /* ── 设置行 ── */
+  .settings-row { display: flex; gap: 12px; margin-bottom: 12px; }
   .setting-select {
-    width: 100%; padding: 8px 10px; margin-top: 4px;
-    background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46;
-    border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; outline: none;
+    flex: 1; padding: 6px 10px; background: #27272a; color: #e4e4e7;
+    border: 1px solid #3f3f46; border-radius: 8px; font-size: 13px;
   }
-  .setting-select:focus { border-color: #7c3aed; }
-  .setting-select option { background: #18181b; color: #e4e4e7; }
 
-  .skill-card {
-    background: #1f1f23; border: 1px solid #27272a;
-    border-radius: 12px; padding: 16px; margin: 8px 0;
+  /* ── Chunk 列表 ── */
+  .chunk-search {
+    width: 100%; padding: 8px 12px; background: #1f1f23; color: #e4e4e7;
+    border: 1px solid #3f3f46; border-radius: 8px; font-size: 13px;
+    margin-bottom: 8px;
   }
-  .skill-name { font-weight: 600; color: #c084fc; margin-bottom: 4px; }
-  .skill-trigger { color: #a1a1aa; font-size: 13px; margin-bottom: 8px; }
-  .skill-domain { display: inline-block; background: rgba(124,58,237,0.2); color: #c084fc; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 6px; }
-  .skill-body { font-size: 13px; color: #a1a1aa; margin-top: 8px; white-space: pre-wrap; line-height: 1.6; max-height: 200px; overflow-y: auto; }
+  .chunk-count { font-size: 12px; color: #52525b; margin-bottom: 8px; }
+  .chunk-list { flex: 1; overflow-y: auto; }
+  .chunk-item {
+    padding: 10px 12px; margin-bottom: 4px; border-radius: 8px;
+    background: #18181b; border: 1px solid transparent; cursor: pointer;
+    font-size: 12px; color: #a1a1aa; transition: all 0.15s;
+    line-height: 1.5;
+  }
+  .chunk-item:hover { border-color: #3f3f46; background: #1f1f23; }
+  .chunk-item.selected { border-color: #7c3aed; background: rgba(124,58,237,0.08); color: #e4e4e7; }
+  .chunk-item .idx { color: #7c3aed; font-weight: 600; margin-right: 6px; }
+  .chunk-item .path { color: #71717a; font-size: 11px; display: block; margin-top: 2px; }
 
-  .btn { padding: 10px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-  .btn-primary { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
-  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-  .btn-ghost { background: transparent; border: 1px solid #3f3f46; color: #a1a1aa; }
+  /* ── 右栏 ── */
+  .section { margin-bottom: 16px; }
+  .section-title { font-size: 13px; color: #71717a; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .prompt-display {
+    background: #1f1f23; padding: 12px; border-radius: 8px;
+    max-height: 200px; overflow-y: auto; font-size: 12px;
+    color: #a1a1aa; white-space: pre-wrap; border: 1px solid #27272a;
+  }
+  .prompt-textarea {
+    width: 100%; min-height: 100px; padding: 12px; background: #1f1f23;
+    color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 8px;
+    font-size: 13px; resize: vertical; font-family: inherit; line-height: 1.6;
+  }
+  .prompt-textarea:focus { outline: none; border-color: #7c3aed; }
+
+  /* ── 按钮 ── */
+  .btn {
+    padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px;
+    cursor: pointer; transition: all 0.2s; font-weight: 500;
+  }
+  .btn-primary { background: #7c3aed; color: #fff; }
+  .btn-primary:hover { background: #6d28d9; }
+  .btn-ghost { background: transparent; color: #a1a1aa; border: 1px solid #3f3f46; }
   .btn-ghost:hover { border-color: #7c3aed; color: #c084fc; }
-  .btn-sm { padding: 6px 14px; font-size: 12px; }
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 
-  .progress-bar { width: 100%; height: 6px; background: #27272a; border-radius: 3px; overflow: hidden; margin: 12px 0; }
-  .progress-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #7c3aed, #06b6d4); transition: width 0.5s ease; width: 0%; }
-  .progress-text { font-size: 13px; color: #71717a; }
+  /* ── 结果卡片 ── */
+  .result-pane {
+    flex: 1; overflow-y: auto; background: #18181b;
+    border-radius: 10px; padding: 16px; border: 1px solid #27272a;
+  }
+  .skill-card {
+    padding: 12px; margin-bottom: 8px; border-radius: 8px;
+    background: #1f1f23; border-left: 3px solid #22c55e;
+  }
+  .skill-card.fail { border-left-color: #ef4444; }
+  .skill-name { font-weight: 600; font-size: 14px; color: #f4f4f5; margin-bottom: 4px; }
+  .skill-trigger { font-size: 12px; color: #a1a1aa; margin-bottom: 6px; }
+  .skill-domain { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(124,58,237,0.12); color: #c084fc; }
+  .skill-body { margin-top: 8px; font-size: 12px; color: #a1a1aa; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 
-  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #3f3f46; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  /* ── 原文预览 ── */
+  .source-preview {
+    background: #111114; padding: 12px; border-radius: 8px;
+    font-size: 12px; color: #a1a1aa; white-space: pre-wrap;
+    max-height: 200px; overflow-y: auto; margin-bottom: 12px;
+    border: 1px solid #27272a; line-height: 1.6;
+  }
+
+  /* ── 版本时间线 ── */
+  .version-timeline { display: flex; gap: 8px; flex-wrap: wrap; }
+  .version-dot {
+    padding: 4px 10px; border-radius: 12px; font-size: 11px;
+    background: #27272a; color: #a1a1aa; cursor: pointer; transition: all 0.2s;
+  }
+  .version-dot:hover { background: rgba(124,58,237,0.2); color: #c084fc; }
+  .version-dot.active { background: #7c3aed; color: #fff; }
+
+  /* ── 进度条 ── */
+  .progress-bar { height: 6px; background: #27272a; border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #06b6d4); width: 0; transition: width 0.3s; }
+  .progress-text { font-size: 12px; color: #71717a; margin-top: 6px; }
+
+  /* ── 加载 ── */
+  .spinner { width: 16px; height: 16px; border: 2px solid #3f3f46; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .loading-text { display: flex; align-items: center; gap: 10px; color: #a1a1aa; }
+  .loading-text { display: flex; align-items: center; gap: 8px; color: #71717a; font-size: 13px; padding: 12px; }
 
-  /* 调优面板 */
-  .tune-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
-  .source-pane, .result-pane { background: #1f1f23; border-radius: 10px; padding: 16px; max-height: 500px; overflow-y: auto; }
-  .pane-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
-  .pane-title .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .pane-title .dot.source { background: #06b6d4; }
-  .pane-title .dot.result { background: #7c3aed; }
-  .source-text { font-size: 13px; color: #d4d4d8; white-space: pre-wrap; line-height: 1.7; font-family: 'SF Mono', monospace; }
-
-  .tune-textarea {
-    width: 100%; min-height: 80px; padding: 12px;
-    background: #1f1f23; color: #e4e4e7; border: 1px solid #3f3f46;
-    border-radius: 8px; font-size: 14px; resize: vertical; font-family: inherit; outline: none;
+  /* ── 抽样验证 ── */
+  .sample-card {
+    padding: 10px; margin-bottom: 6px; border-radius: 8px;
+    background: #1f1f23; border: 1px solid #27272a; font-size: 12px;
   }
-  .tune-textarea:focus { border-color: #7c3aed; }
-  .tune-textarea::placeholder { color: #52525b; }
-
-  .version-timeline { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-  .version-chip {
-    padding: 4px 12px; border-radius: 20px; font-size: 12px;
-    cursor: pointer; transition: all 0.2s;
-    background: #27272a; color: #71717a; border: 1px solid #3f3f46;
-  }
-  .version-chip:hover { border-color: #7c3aed; color: #c084fc; }
-  .version-chip.active { background: rgba(124,58,237,0.2); color: #c084fc; border-color: #7c3aed; }
-
-  .chunk-select {
-    width: 100%; padding: 8px 10px; margin-bottom: 12px;
-    background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46;
-    border-radius: 6px; font-size: 13px; cursor: pointer; outline: none;
-  }
-  .chunk-select:focus { border-color: #7c3aed; }
-
-  .sample-item { background: #1f1f23; border-radius: 10px; padding: 14px; margin: 8px 0; border-left: 3px solid #3f3f46; }
-  .sample-item.pass { border-left-color: #22c55e; }
-  .sample-item.fail { border-left-color: #ef4444; }
-  .sample-heading { font-size: 13px; font-weight: 600; color: #a1a1aa; margin-bottom: 6px; }
-  .sample-preview { font-size: 12px; color: #71717a; margin-bottom: 8px; }
-  .sample-skills { display: flex; flex-wrap: wrap; gap: 6px; }
-  .sample-skill-tag { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(124,58,237,0.15); color: #c084fc; }
-  .sample-skill-tag.fail { background: rgba(239,68,68,0.15); color: #f87171; }
+  .sample-pass { color: #4ade80; } .sample-fail { color: #f87171; }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>pdf2skill</h1>
-  <p class="subtitle">智能文档解析 → 结构化知识提取</p>
 
-  <!-- 阶段 1 -->
-  <div id="phase1" class="phase-card active">
-    <div class="phase-header"><div class="phase-number">1</div><div class="phase-title">上传文档 · 类型检测</div><button class="phase-toggle" onclick="togglePhase('phase1')">▲</button></div>
+<!-- 顶栏 -->
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:16px">
+    <h1>pdf2skill</h1>
+    <span id="doc-name-display" style="font-size:13px;color:#71717a"></span>
+  </div>
+  <div class="topbar-info">
+    <span id="strategy-tag" class="tag" style="display:none"></span>
+    <span id="chunk-count-tag" class="tag" style="display:none"></span>
+    <button class="btn btn-ghost btn-sm" onclick="resetSession()" style="display:none" id="btn-reupload">📄 重新上传</button>
+  </div>
+</div>
+
+<div class="main">
+  <!-- 左栏：上传 + 文档信息 + Chunk 列表 -->
+  <div class="left panel" id="left-panel">
     <div id="upload-area">
       <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📄</div>
@@ -856,320 +873,299 @@ _HTML_PAGE = """<!DOCTYPE html>
       <input type="file" id="fileInput" accept=".pdf,.txt,.epub,.md">
     </div>
     <div id="analysis-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在分析文档类型和知识结构...</span></div>
-    <div id="analysis-result" style="display:none"></div>
-    <div id="reupload-wrap" style="display:none; margin-top:12px; text-align:right">
-      <button class="btn btn-ghost btn-sm" onclick="resetSession()">📄 重新上传文件</button>
+    <div id="doc-summary" style="display:none"></div>
+    <div id="chunk-panel" style="display:none; flex-direction:column; min-height:0; flex:1">
+      <input id="chunk-search" class="chunk-search" placeholder="搜索 chunk 内容…" oninput="searchChunks()">
+      <div id="chunk-count" class="chunk-count"></div>
+      <div id="chunk-list" class="chunk-list"></div>
     </div>
   </div>
 
-  <!-- 阶段 2：深度调优 -->
-  <div id="phase2" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">2</div><div class="phase-title">深度调优 · 原文对比</div><button class="phase-toggle" onclick="togglePhase('phase2')">▲</button></div>
-    <div id="tune-controls">
-      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px">
-        <label style="font-size:13px; color:#71717a; white-space:nowrap">选择文本块</label>
-        <input id="chunk-search" class="chunk-select" style="flex:1" placeholder="搜索关键词…（留空使用系统推荐）" oninput="searchChunks()">
-        <span id="chunk-total" style="font-size:12px; color:#52525b; white-space:nowrap"></span>
+  <!-- 右栏：Prompt 操作台 -->
+  <div class="right panel" id="right-panel">
+    <div id="right-placeholder" style="display:flex; align-items:center; justify-content:center; height:100%; color:#3f3f46; font-size:15px;">
+      ← 上传文档后进入操作台
+    </div>
+    <div id="workspace" style="display:none; flex-direction:column; min-height:0; flex:1">
+      <!-- 系统 Prompt -->
+      <div class="section">
+        <details>
+          <summary class="section-title" style="cursor:pointer">🔍 系统 Prompt（点击展开）</summary>
+          <div id="system-prompt-display" class="prompt-display"></div>
+        </details>
       </div>
-      <select id="chunk-select" class="chunk-select" size="5" style="height:auto; min-height:80px"></select>
-    </div>
-    <details id="prompt-details" style="margin:12px 0">
-      <summary style="font-size:12px; color:#7c3aed; cursor:pointer; user-select:none">🔍 查看当前系统 Prompt（点击展开）</summary>
-      <div id="system-prompt-display" class="source-text" style="background:#1f1f23; padding:12px; border-radius:8px; margin-top:8px; max-height:300px; overflow-y:auto; font-size:12px"></div>
-    </details>
-    <div id="tune-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在提取...</span></div>
-    <div id="tune-result" style="display:none"></div>
-    <div style="margin-top:12px">
-      <label style="font-size:13px; color:#71717a">Prompt 调优方向（系统已根据文档类型预填基线策略，可修改）</label>
-      <textarea id="prompt-hint" class="tune-textarea" placeholder="加载中..."></textarea>
-      <div style="margin-top:10px; display:flex; gap:12px; align-items:center;">
-        <button class="btn btn-primary" onclick="runTune()">🔬 提取并对比</button>
-        <button class="btn btn-ghost btn-sm" onclick="goToSampleCheck()">✅ 调优完成，进入抽样验证</button>
+
+      <!-- Prompt 编辑器 -->
+      <div class="section">
+        <div class="section-title">✏️ 提取策略（系统已根据文档类型预填）</div>
+        <textarea id="prompt-hint" class="prompt-textarea" placeholder="加载中..."></textarea>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="runTune()">🔬 提取并对比</button>
+          <button class="btn btn-ghost btn-sm" onclick="runSampleCheck()">🎲 抽样验证 (5块)</button>
+          <button class="btn btn-ghost btn-sm" onclick="startExecute()">⚡ 全量执行</button>
+        </div>
+      </div>
+
+      <!-- 加载状态 -->
+      <div id="tune-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在提取...</span></div>
+
+      <!-- 原文预览 -->
+      <div id="source-preview-section" class="section" style="display:none">
+        <div class="section-title">📖 原文 · chunk #<span id="source-chunk-idx"></span></div>
+        <div id="source-preview" class="source-preview"></div>
+      </div>
+
+      <!-- 提取结果 -->
+      <div id="result-section" class="section" style="display:none; flex:1; min-height:0">
+        <div class="section-title">🎯 提取结果 <span id="result-stats" style="color:#52525b;font-size:11px"></span></div>
+        <div id="result-cards" class="result-pane"></div>
+      </div>
+
+      <!-- 抽样验证结果 -->
+      <div id="sample-section" class="section" style="display:none">
+        <div class="section-title">🎲 抽样验证结果 <span id="sample-stats" style="font-size:11px"></span></div>
+        <div id="sample-cards"></div>
+      </div>
+
+      <!-- 全量执行进度 -->
+      <div id="execute-section" class="section" style="display:none">
+        <div class="section-title">⚡ 全量执行</div>
+        <div class="progress-bar"><div class="progress-fill" id="pbar"></div></div>
+        <div class="progress-text" id="ptext">准备中...</div>
+        <div id="execute-result" style="margin-top:12px"></div>
+      </div>
+
+      <!-- 版本历史 -->
+      <div id="version-section" class="section" style="display:none">
+        <div class="section-title">🕐 版本历史（点击回溯）</div>
+        <div id="version-timeline" class="version-timeline"></div>
       </div>
     </div>
-    <div id="version-timeline-wrap" style="display:none; margin-top:16px">
-      <label style="font-size:12px; color:#71717a;">版本历史（点击回溯）</label>
-      <div id="version-timeline" class="version-timeline"></div>
-    </div>
-  </div>
-
-  <!-- 阶段 3：随机抽样验证 -->
-  <div id="phase3" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">3</div><div class="phase-title">随机抽样验证</div><button class="phase-toggle" onclick="togglePhase('phase3')">▲</button></div>
-    <div style="display:flex; gap:12px; align-items:center;">
-      <button class="btn btn-primary" onclick="runSampleCheck()">🎲 随机抽样 5 个 chunk</button>
-      <button class="btn btn-ghost btn-sm" onclick="goToExecute()">⚡ 跳过验证，直接全量</button>
-    </div>
-    <div id="sample-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在批量提取和校验...</span></div>
-    <div id="sample-result" style="display:none"></div>
-  </div>
-
-  <!-- 阶段 4：全量执行 -->
-  <div id="phase4" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">4</div><div class="phase-title">全量执行 · 实时结果</div><button class="phase-toggle" onclick="togglePhase('phase4')">▲</button></div>
-    <div id="execute-progress" style="display:none"></div>
-    <div id="execute-result" style="display:none"></div>
   </div>
 </div>
 
 <script>
 let sessionId = localStorage.getItem('pdf2skill_session');
-
-function togglePhase(id) {
-  document.getElementById(id).classList.toggle('collapsed');
-}
+let selectedChunkIdx = null;
 
 function resetSession() {
   localStorage.removeItem('pdf2skill_session');
   location.reload();
 }
 
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 // ── 上传 ──
 const fileInput = document.getElementById('fileInput');
 const dropzone = document.getElementById('dropzone');
-dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
-dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]); });
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor = '#7c3aed'; });
+dropzone.addEventListener('dragleave', () => { dropzone.style.borderColor = '#3f3f46'; });
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.style.borderColor = '#3f3f46'; if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
 
 async function uploadFile(file) {
   document.getElementById('upload-area').style.display = 'none';
   document.getElementById('analysis-loading').style.display = 'flex';
+
   const fd = new FormData(); fd.append('file', file);
   try {
     const r = await fetch('/api/analyze', { method: 'POST', body: fd });
-    const d = await r.json();
-    sessionId = d.session_id;
+    const data = await r.json();
+    if (!r.ok) { alert(data.detail || '分析失败'); location.reload(); return; }
+    sessionId = data.session_id;
     localStorage.setItem('pdf2skill_session', sessionId);
-    showAnalysis(d);
-  } catch (e) {
-    alert('分析失败: ' + e.message);
-    document.getElementById('upload-area').style.display = 'block';
-    document.getElementById('analysis-loading').style.display = 'none';
-  }
+    showWorkspace(data);
+  } catch(e) { alert('上传失败: ' + e.message); location.reload(); }
 }
 
-function showAnalysis(data) {
+// ── 展示工作区 ──
+function showWorkspace(data) {
   document.getElementById('analysis-loading').style.display = 'none';
-  const el = document.getElementById('analysis-result');
-  el.style.display = 'block';
+  document.getElementById('upload-area').style.display = 'none';
+  document.getElementById('right-placeholder').style.display = 'none';
+  document.getElementById('workspace').style.display = 'flex';
+  document.getElementById('btn-reupload').style.display = '';
+  document.getElementById('doc-name-display').textContent = '《' + data.doc_name + '》';
+  document.getElementById('strategy-tag').style.display = '';
+  document.getElementById('strategy-tag').textContent = data.prompt_type;
+  document.getElementById('chunk-count-tag').style.display = '';
+  document.getElementById('chunk-count-tag').textContent = data.filtered_chunks + ' chunks';
+
+  // 文档摘要
+  const cc = (data.core_components||[]).map(c=>'<span class="summary-tag">'+c+'</span>').join('');
+  const st = (data.skill_types||[]).map(c=>'<span class="summary-tag green">'+c+'</span>').join('');
   const typeOpts = ['技术手册','叙事类','方法论','学术教材','操作规范'].map(t =>
-    `<option value="${t}" ${t===data.book_type?'selected':''}>${t}</option>`).join('');
-  const pm = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor','操作规范':'extractor'};
-  const promptOpts = Object.entries(pm).map(([l,v]) =>
-    `<option value="${v}" ${v===data.prompt_type?'selected':''}>${v} (${l})</option>`).join('');
-  const cc = (data.core_components||[]).map(c=>`<span class="summary-tag">${c}</span>`).join('');
-  const st = (data.skill_types||[]).map(c=>`<span class="summary-tag green">${c}</span>`).join('');
+    '<option'+(t===data.book_type?' selected':'')+'>'+t+'</option>').join('');
+  const ds = document.getElementById('doc-summary');
+  ds.style.display = 'block';
+  ds.innerHTML = '<div class="doc-summary">' +
+    '<div class="row"><span class="label">格式</span><span class="val">' + data.format.toUpperCase() + '</span>' +
+    '<span class="label">领域</span><span class="val">' + (data.domains||[]).join(', ') + '</span>' +
+    '<span class="label">块数</span><span class="val">' + data.filtered_chunks + ' / ' + data.total_chunks + '</span></div>' +
+    (cc||st ? '<div class="summary-tags" style="margin-bottom:6px">' + cc + st + '</div>' : '') +
+    '<div class="settings-row">' +
+      '<select id="sel-book-type" class="setting-select" onchange="autoPromptType();saveSettings()">' + typeOpts + '</select>' +
+    '</div></div>';
 
-  el.innerHTML = `
-    <div class="info-grid">
-      <div class="info-item"><div class="info-label">文档名称</div><div class="info-value">${data.doc_name}</div></div>
-      <div class="info-item"><div class="info-label">格式</div><div class="info-value">${data.format.toUpperCase()}</div></div>
-      <div class="info-item"><div class="info-label">领域</div><div class="info-value">${data.domains.join(', ')}</div></div>
-      <div class="info-item"><div class="info-label">文本块</div><div class="info-value">${data.filtered_chunks} / ${data.total_chunks}</div></div>
-    </div>
-    ${(cc||st)?`<div class="summary-section">${cc?`<div class="summary-title">核心组件</div><div class="summary-tags">${cc}</div>`:''}\
-${st?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</div><div class="summary-tags">${st}</div>`:''}</div>`:''}
-    <div class="info-grid" style="margin-top:0">
-      <div class="info-item"><div class="info-label">文档类型 <span style="color:#7c3aed">可调整 ▾</span></div>
-        <select id="sel-book-type" class="setting-select">${typeOpts}</select></div>
-      <div class="info-item"><div class="info-label">提取策略 <span style="color:#7c3aed">可调整 ▾</span></div>
-        <select id="sel-prompt-type" class="setting-select">${promptOpts}</select></div>
-    </div>`;
+  // Baseline hint + system prompt
+  if (data.baseline_hint) document.getElementById('prompt-hint').value = data.baseline_hint;
+  if (data.system_prompt) document.getElementById('system-prompt-display').textContent = data.system_prompt;
 
-  document.getElementById('sel-book-type').addEventListener('change', function() {
-    const m = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor','操作规范':'extractor'};
-    document.getElementById('sel-prompt-type').value = m[this.value]||'extractor'; saveSettings();
-  });
-  document.getElementById('sel-prompt-type').addEventListener('change', saveSettings);
-  document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
-  document.getElementById('phase1').classList.add('collapsed');
-  document.getElementById('reupload-wrap').style.display = 'block';
-  document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
+  // Chunk 列表
+  document.getElementById('chunk-panel').style.display = 'flex';
+  loadChunkList();
+}
 
-  // 预填 baseline hint
-  if (data.baseline_hint) {
-    document.getElementById('prompt-hint').value = data.baseline_hint;
-  }
-  // 展示 system prompt
-  if (data.system_prompt) {
-    document.getElementById('system-prompt-display').textContent = data.system_prompt;
-  }
-
-  loadChunkSelector();
+function autoPromptType() {
+  const m = {'技术手册':'extractor','叙事类':'narrative_extractor','方法论':'methodology_extractor','学术教材':'academic_extractor','操作规范':'extractor'};
+  // 保存时自动推导
 }
 
 async function saveSettings() {
   if (!sessionId) return;
   await fetch('/api/session/'+sessionId+'/settings', {
     method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ book_type: document.getElementById('sel-book-type')?.value||'', prompt_type: document.getElementById('sel-prompt-type')?.value||'' })
+    body: JSON.stringify({ book_type: document.getElementById('sel-book-type')?.value||'' })
   });
 }
 
-// ── 阶段 2：深度调优 ──
+// ── Chunk 列表 ──
 let _searchTimer = null;
-async function loadChunkSelector(q) {
+async function loadChunkList(q) {
   try {
-    const params = q ? `?q=${encodeURIComponent(q)}` : '?recommend=true';
+    const params = q ? '?q='+encodeURIComponent(q)+'&page_size=50' : '?page_size=50';
     const r = await fetch('/api/chunks/'+sessionId+params);
     const data = await r.json();
-    const sel = document.getElementById('chunk-select');
-    document.getElementById('chunk-total').textContent = `共 ${data.total} 块`;
-    sel.innerHTML = data.items.map(c =>
-      `<option value="${c.index}">[${c.index}] ${c.heading_path.join(' > ')||'(无标题)'} — ${c.preview}</option>`
+    document.getElementById('chunk-count').textContent = '共 ' + data.total + ' 块' + (q ? '（筛选）' : '');
+    const list = document.getElementById('chunk-list');
+    list.innerHTML = data.items.map(c =>
+      '<div class="chunk-item' + (c.index===selectedChunkIdx?' selected':'') + '" onclick="selectChunk('+c.index+')" data-idx="'+c.index+'">' +
+        '<span class="idx">#'+c.index+'</span>' + esc(c.preview) +
+        '<span class="path">' + (c.heading_path.join(' > ')||'') + '</span>' +
+      '</div>'
     ).join('');
   } catch(e) {}
 }
+
 function searchChunks() {
   clearTimeout(_searchTimer);
   _searchTimer = setTimeout(() => {
-    const q = document.getElementById('chunk-search').value.trim();
-    loadChunkSelector(q || undefined);
+    loadChunkList(document.getElementById('chunk-search').value.trim() || undefined);
   }, 300);
 }
 
+function selectChunk(idx) {
+  selectedChunkIdx = idx;
+  document.querySelectorAll('.chunk-item').forEach(el => {
+    el.classList.toggle('selected', parseInt(el.dataset.idx) === idx);
+  });
+}
+
+// ── 调优 ──
 async function runTune() {
-  const idx = parseInt(document.getElementById('chunk-select').value);
+  if (selectedChunkIdx === null) { alert('请先在左栏选择一个 chunk'); return; }
   const hint = document.getElementById('prompt-hint').value.trim();
   document.getElementById('tune-loading').style.display = 'flex';
-  document.getElementById('tune-result').style.display = 'none';
+  document.getElementById('result-section').style.display = 'none';
+  document.getElementById('source-preview-section').style.display = 'none';
   try {
     const r = await fetch('/api/tune/'+sessionId, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ chunk_index: idx, prompt_hint: hint })
+      body: JSON.stringify({ chunk_index: selectedChunkIdx, prompt_hint: hint })
     });
-    showTuneResult(await r.json());
+    const d = await r.json();
+    showTuneResult(d);
     loadTuneHistory();
   } catch(e) { alert('调优失败: '+e.message); }
   document.getElementById('tune-loading').style.display = 'none';
 }
 
 function showTuneResult(d) {
-  const el = document.getElementById('tune-result');
-  el.style.display = 'block';
-  const skills = d.extracted_skills.map(s => `
-    <div class="skill-card" style="border-left:3px solid ${s.status==='failed'?'#ef4444':'#22c55e'}">
-      <div class="skill-name">${s.name||'(unnamed)'}</div>
-      <div class="skill-trigger">${s.trigger||''}</div>
-      <span class="skill-domain">${s.domain||'general'}</span>
-      <span style="font-size:11px;color:${s.status==='failed'?'#f87171':'#4ade80'}">${s.status}</span>
-      <div class="skill-body">${s.body||''}</div>
-    </div>`).join('');
-  el.innerHTML = `<div class="tune-panel">
-    <div class="source-pane">
-      <div class="pane-title"><span class="dot source"></span> 原文 · chunk #${d.chunk_index}</div>
-      <div style="font-size:11px;color:#52525b;margin-bottom:8px">${d.source_context}</div>
-      <div class="source-text">${esc(d.source_text)}</div>
-    </div>
-    <div class="result-pane">
-      <div class="pane-title"><span class="dot result"></span> 提取结果 · v${d.version} (${d.passed}✅ ${d.failed}❌)</div>
-      ${d.prompt_hint_used?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px">📝 ${esc(d.prompt_hint_used)}</div>`:''}
-      ${skills||'<div style="color:#71717a">EMPTY_BLOCK — 无可提取内容</div>'}
-    </div>
-  </div>`;
+  // 原文预览
+  document.getElementById('source-preview-section').style.display = 'block';
+  document.getElementById('source-chunk-idx').textContent = d.chunk_index;
+  document.getElementById('source-preview').textContent = d.source_text || '';
+
+  // 提取结果
+  const sec = document.getElementById('result-section');
+  sec.style.display = 'flex';
+  const skills = d.extracted_skills || [];
+  const passed = skills.filter(s=>s.status!=='failed').length;
+  document.getElementById('result-stats').textContent = 'v' + (d.version||'?') + ' · ' + passed + '✅ ' + (skills.length-passed) + '❌';
+  document.getElementById('result-cards').innerHTML = skills.map(s =>
+    '<div class="skill-card' + (s.status==='failed'?' fail':'') + '">' +
+      '<div class="skill-name">' + esc(s.name||'(unnamed)') + '</div>' +
+      '<div class="skill-trigger">' + esc(s.trigger||'') + '</div>' +
+      '<span class="skill-domain">' + esc(s.domain||'general') + '</span>' +
+      '<div class="skill-body">' + esc(s.body||'') + '</div>' +
+    '</div>'
+  ).join('') || '<div style="color:#52525b;padding:20px;text-align:center">EMPTY_BLOCK — 无可提取内容</div>';
 }
 
+// ── 版本历史 ──
 async function loadTuneHistory() {
   try {
     const r = await fetch('/api/tune-history/'+sessionId);
-    const h = await r.json();
-    if (!h.length) return;
-    window._th = h;
-    const wrap = document.getElementById('version-timeline-wrap');
-    wrap.style.display = 'block';
-    document.getElementById('version-timeline').innerHTML = h.map(v =>
-      `<div class="version-chip" onclick="replayV(${v.version-1})" title="${v.timestamp}">v${v.version} · #${v.chunk_index}</div>`
+    const history = await r.json();
+    if (!history.length) return;
+    document.getElementById('version-section').style.display = 'block';
+    document.getElementById('version-timeline').innerHTML = history.map((h,i) =>
+      '<div class="version-dot' + (i===history.length-1?' active':'') + '" onclick="replayVersion('+i+')" title="chunk#'+h.chunk_index+' '+h.timestamp+'">' +
+        'v' + h.version + '</div>'
     ).join('');
+    window._tuneHistory = history;
   } catch(e) {}
 }
 
-function replayV(i) {
-  const v = window._th?.[i]; if (!v) return;
-  document.getElementById('prompt-hint').value = v.prompt_hint||'';
-  document.getElementById('chunk-select').value = v.chunk_index;
-  const skills = (v.extracted_skills||[]).map(s => `
-    <div class="skill-card" style="border-left:3px solid ${s.status==='failed'?'#ef4444':'#22c55e'}">
-      <div class="skill-name">${s.name||'(unnamed)'}</div>
-      <div class="skill-trigger">${s.trigger||''}</div>
-      <span class="skill-domain">${s.domain||'general'}</span>
-      <div class="skill-body">${s.body||''}</div>
-    </div>`).join('');
-  const el = document.getElementById('tune-result');
-  el.style.display = 'block';
-  el.innerHTML = `<div class="tune-panel">
-    <div class="source-pane"><div class="pane-title"><span class="dot source"></span> 原文快照 #${v.chunk_index}</div>
-      <div class="source-text">${esc(v.source_text_preview||'')}</div></div>
-    <div class="result-pane"><div class="pane-title"><span class="dot result"></span> v${v.version} 历史回放</div>
-      ${v.prompt_hint?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px">📝 ${esc(v.prompt_hint)}</div>`:''}
-      ${skills||'<div style="color:#71717a">无结果</div>'}</div>
-  </div>`;
-  document.querySelectorAll('.version-chip').forEach((c,j) => c.classList.toggle('active', j===i));
+function replayVersion(idx) {
+  const h = window._tuneHistory[idx];
+  if (!h) return;
+  document.getElementById('prompt-hint').value = h.prompt_hint || '';
+  selectedChunkIdx = h.chunk_index;
+  document.querySelectorAll('.chunk-item').forEach(el => {
+    el.classList.toggle('selected', parseInt(el.dataset.idx) === h.chunk_index);
+  });
+  showTuneResult({
+    chunk_index: h.chunk_index,
+    source_text: h.source_text_preview || '',
+    extracted_skills: h.extracted_skills || [],
+    version: h.version,
+  });
+  document.querySelectorAll('.version-dot').forEach((el,i) => el.classList.toggle('active', i===idx));
 }
 
-// ── 阶段 3：抽样验证 ──
-function goToSampleCheck() {
-  document.getElementById('phase2').classList.remove('active'); document.getElementById('phase2').classList.add('done');
-  document.getElementById('phase3').classList.remove('hidden'); document.getElementById('phase3').classList.add('active');
-}
-
+// ── 抽样验证 ──
 async function runSampleCheck() {
-  document.getElementById('sample-loading').style.display = 'flex';
-  document.getElementById('sample-result').style.display = 'none';
+  document.getElementById('sample-section').style.display = 'block';
+  document.getElementById('sample-cards').innerHTML = '<div class="loading-text"><div class="spinner"></div><span>R1 正在批量提取和校验...</span></div>';
   try {
     const r = await fetch('/api/sample-check/'+sessionId, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sample_size:5})
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ sample_size: 5 })
     });
-    showSampleResult(await r.json());
-  } catch(e) { alert('抽样失败: '+e.message); }
-  document.getElementById('sample-loading').style.display = 'none';
+    const d = await r.json();
+    const passRate = d.total > 0 ? (d.passed/d.total*100).toFixed(0) : 0;
+    document.getElementById('sample-stats').innerHTML = '<span class="'+(passRate>=60?'sample-pass':'sample-fail')+'">通过率 '+passRate+'% ('+d.passed+'/'+d.total+')</span>';
+    document.getElementById('sample-cards').innerHTML = (d.details||[]).map(item =>
+      '<div class="sample-card">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>#'+item.chunk_index+'</span>' +
+        '<span class="'+(item.valid?'sample-pass':'sample-fail')+'">'+(item.valid?'✅':'❌')+'</span></div>' +
+        '<div style="color:#71717a;font-size:11px">' + esc((item.source_preview||'').substring(0,100)) + '</div>' +
+        (item.skills||[]).map(s=>'<span class="summary-tag" style="margin-top:4px">'+esc(s)+'</span>').join('') +
+      '</div>'
+    ).join('');
+  } catch(e) { document.getElementById('sample-cards').innerHTML = '<div style="color:#f87171">验证失败: '+e.message+'</div>'; }
 }
 
-function showSampleResult(d) {
-  const el = document.getElementById('sample-result');
-  el.style.display = 'block';
-  const items = d.results.map(r => {
-    const hp = r.skills.some(s=>s.status==='pass');
-    const tags = r.skills.map(s =>
-      `<span class="sample-skill-tag ${s.status==='failed'?'fail':''}">${s.name||'?'} ${s.status==='pass'?'✅':'❌'}</span>`).join('');
-    return `<div class="sample-item ${hp?'pass':'fail'}">
-      <div class="sample-heading">#${r.chunk_index} · ${r.heading_path.join(' > ')||'(无标题)'}</div>
-      <div class="sample-preview">${esc(r.source_preview)}</div>
-      <div class="sample-skills">${tags||'<span style="color:#71717a">EMPTY</span>'}</div>
-    </div>`;
-  }).join('');
-  el.innerHTML = `
-    <div class="info-grid">
-      <div class="info-item"><div class="info-label">抽样数</div><div class="info-value">${d.sample_size}</div></div>
-      <div class="info-item"><div class="info-label">提取到</div><div class="info-value">${d.total_raw} Raw</div></div>
-      <div class="info-item"><div class="info-label">通过率</div><div class="info-value highlight">${d.pass_rate}%</div></div>
-      <div class="info-item"><div class="info-label">Hint</div><div class="info-value" style="font-size:12px">${d.prompt_hint_used||'(无)'}</div></div>
-    </div>
-    ${items}
-    <div style="margin-top:16px;display:flex;gap:12px">
-      <button class="btn btn-primary" onclick="goToExecute()">✅ 通过，开始全量</button>
-      <button class="btn btn-ghost" onclick="runSampleCheck()">🔄 再抽一批</button>
-      <button class="btn btn-ghost" onclick="backToTune()">↩ 返回调优</button>
-    </div>`;
-}
-
-function backToTune() {
-  document.getElementById('phase3').classList.remove('active'); document.getElementById('phase3').classList.add('hidden');
-  document.getElementById('phase2').classList.remove('done'); document.getElementById('phase2').classList.add('active');
-}
-
-// ── 阶段 4：全量执行 ──
-function goToExecute() {
-  document.getElementById('phase2').classList.remove('active'); document.getElementById('phase2').classList.add('done');
-  document.getElementById('phase3').classList.remove('active'); document.getElementById('phase3').classList.add('done');
-  document.getElementById('phase4').classList.remove('hidden'); document.getElementById('phase4').classList.add('active');
-  startExecute();
-}
-
+// ── 全量执行 ──
 function startExecute() {
-  const p = document.getElementById('execute-progress');
-  p.style.display = 'block';
-  p.innerHTML = `<div class="progress-bar"><div class="progress-fill" id="pbar"></div></div><div class="progress-text" id="ptext">准备中...</div>`;
+  if (!confirm('开始全量执行？将使用当前 prompt 策略处理所有 chunk。')) return;
+  const sec = document.getElementById('execute-section');
+  sec.style.display = 'block';
+  document.getElementById('pbar').style.width = '0';
+  document.getElementById('ptext').textContent = '准备中...';
+  document.getElementById('execute-result').innerHTML = '';
+
   const src = new EventSource('/api/execute/'+sessionId);
   src.addEventListener('phase', e => {
     const d = JSON.parse(e.data);
@@ -1181,27 +1177,21 @@ function startExecute() {
     const pct = (d.completed/d.total*100).toFixed(0);
     document.getElementById('pbar').style.width = pct+'%';
     const eta = d.eta_s>60?(d.eta_s/60).toFixed(0)+'m':d.eta_s.toFixed(0)+'s';
-    document.getElementById('ptext').textContent = `${d.completed}/${d.total} (${pct}%) | 💾 ${d.skills_on_disk||0} Skills | ⏱${d.elapsed_s.toFixed(0)}s ETA ${eta}`;
+    document.getElementById('ptext').textContent = d.completed+'/'+d.total+' ('+pct+'%) | 💾 '+(d.skills_on_disk||0)+' Skills | ⏱'+d.elapsed_s.toFixed(0)+'s ETA '+eta;
   });
   src.addEventListener('complete', e => {
     src.close();
     const d = JSON.parse(e.data);
     document.getElementById('pbar').style.width = '100%';
-    const r = document.getElementById('execute-result');
-    r.style.display = 'block';
-    const skills = (d.skills||[]).map(s => `<div class="skill-card"><div class="skill-name">${s.name}</div><div class="skill-trigger">${s.trigger}</div><span class="skill-domain">${s.domain}</span><div class="skill-body">${s.body}</div></div>`).join('');
-    r.innerHTML = `<div class="info-grid" style="margin-top:16px">
-      <div class="info-item"><div class="info-label">最终 Skill</div><div class="info-value highlight">${d.final_skills}</div></div>
-      <div class="info-item"><div class="info-label">耗时</div><div class="info-value">${d.elapsed_s}s</div></div>
-      <div class="info-item"><div class="info-label">输出目录</div><div class="info-value">${d.output_dir}</div></div>
-    </div><h3 style="margin:16px 0 8px;font-size:15px;color:#a1a1aa">最终 Skill 列表</h3>${skills}`;
-    document.getElementById('phase4').classList.remove('active'); document.getElementById('phase4').classList.add('done');
-    document.getElementById('ptext').textContent = `✅ 完成！${d.final_skills} Skills → ${d.output_dir}`;
+    document.getElementById('ptext').textContent = '✅ 完成！'+d.final_skills+' Skills → '+d.output_dir;
+    const skills = (d.skills||[]).map(s =>
+      '<div class="skill-card"><div class="skill-name">'+esc(s.name)+'</div><div class="skill-trigger">'+esc(s.trigger)+'</div><span class="skill-domain">'+esc(s.domain)+'</span><div class="skill-body">'+esc(s.body)+'</div></div>'
+    ).join('');
+    document.getElementById('execute-result').innerHTML =
+      '<div style="margin-top:8px"><span class="val hl">'+d.final_skills+' Skills</span> · '+d.elapsed_s+'s · '+d.output_dir+'</div>' + skills;
   });
   src.onerror = () => { src.close(); document.getElementById('ptext').textContent = '❌ 连接中断'; };
 }
-
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── 页面恢复 ──
 (async function() {
@@ -1210,32 +1200,9 @@ function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
     const r = await fetch('/api/session/'+sessionId+'/state');
     if (!r.ok) { localStorage.removeItem('pdf2skill_session'); return; }
     const st = await r.json();
-    const m = st.meta;
-    document.getElementById('upload-area').style.display = 'none';
-    const el = document.getElementById('analysis-result');
-    el.style.display = 'block';
-    const cc = (m.core_components||[]).map(c=>`<span class="summary-tag">${c}</span>`).join('');
-    const stags = (m.skill_types||[]).map(c=>`<span class="summary-tag green">${c}</span>`).join('');
-    el.innerHTML = `<div class="info-grid">
-      <div class="info-item"><div class="info-label">文档名称</div><div class="info-value">${m.doc_name}</div></div>
-      <div class="info-item"><div class="info-label">格式</div><div class="info-value">${m.format.toUpperCase()}</div></div>
-      <div class="info-item"><div class="info-label">领域</div><div class="info-value">${(m.domains||[]).join(', ')}</div></div>
-      <div class="info-item"><div class="info-label">文本块</div><div class="info-value">${m.filtered_chunks} / ${m.total_chunks}</div></div>
-    </div>
-    ${(cc||stags)?`<div class="summary-section">${cc?`<div class="summary-title">核心组件</div><div class="summary-tags">${cc}</div>`:''}\
-${stags?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</div><div class="summary-tags">${stags}</div>`:''}</div>`:''}
-    <div class="info-grid" style="margin-top:0">
-      <div class="info-item"><div class="info-label">文档类型</div><div class="info-value highlight">${m.book_type}</div></div>
-      <div class="info-item"><div class="info-label">提取策略</div><div class="info-value highlight">${m.prompt_type}</div></div>
-    </div>`;
-    document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
-    document.getElementById('phase1').classList.add('collapsed');
-    document.getElementById('reupload-wrap').style.display = 'block';
-    document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
-    loadChunkSelector();
+    showWorkspace(st.meta);
     loadTuneHistory();
-
-    // 加载 prompt preview（baseline hint + system prompt）
+    // 加载 prompt preview
     try {
       const pr = await fetch('/api/prompt-preview/'+sessionId);
       if (pr.ok) {
@@ -1251,3 +1218,4 @@ ${stags?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类�
 </script>
 </body>
 </html>"""
+

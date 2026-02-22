@@ -478,11 +478,73 @@ def clean_markdown(text: str) -> str:
 # ──── 主入口 ────
 
 
+# 对话轮次边界检测：Turn N / 👤 User / 🤖 Assistant 等模式
+_TURN_RE = re.compile(
+    r"^(?:Turn\s+\d+|#{1,3}\s*(?:Turn|Round|轮次)\s*\d+|"
+    r"(?:👤|🧑|🤖|💬)\s*(?:User|Assistant|用户|助手))",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+# 理想块大小目标值（用于自适应 split_level 评分）
+_TARGET_CHUNK_CHARS = 1500
+
+
+def _auto_detect_split_level(
+    text: str, headings: list[_HeadingNode]
+) -> int:
+    """
+    自适应检测最优切分层级。
+    遍历 level 2→6，选择平均块大小最接近 TARGET 的层级。
+    """
+    text_len = len(text)
+    best_level, best_score = 2, float("inf")
+
+    for level in range(2, 7):
+        boundaries = [h for h in headings if h.level <= level]
+        if len(boundaries) < 2:
+            continue
+        avg_size = text_len / len(boundaries)
+        score = abs(avg_size - _TARGET_CHUNK_CHARS)
+        if score < best_score:
+            best_score = score
+            best_level = level
+
+    return best_level
+
+
+def _chunk_by_conversation_turns(
+    text: str, doc_name: str
+) -> list[TextChunk]:
+    """按对话轮次边界切分（用于聊天记录/对话体文档）。"""
+    positions = [m.start() for m in _TURN_RE.finditer(text)]
+    if not positions:
+        return []
+
+    # 确保从文本起始位置开始
+    if positions[0] > 0:
+        positions.insert(0, 0)
+
+    chunks: list[TextChunk] = []
+    for i, start in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(text)
+        content = text[start:end].strip()
+        if not content or len(content) < MIN_CHUNK_CHARS:
+            continue
+        chunks.append(
+            TextChunk(
+                content=content,
+                context=_build_context(doc_name, []),
+                index=len(chunks),
+            )
+        )
+    return chunks
+
+
 def chunk_markdown(
     text: str,
     doc_name: str,
     *,
-    split_level: int = 2,
+    split_level: int = 0,  # 0 = 自动检测
     max_chars: int = MAX_CHUNK_CHARS,
     min_chars: int = MIN_CHUNK_CHARS,
     clean: bool = True,
@@ -490,15 +552,16 @@ def chunk_markdown(
     """
     将 Markdown 文本切分为语义完整的文本块。
 
-    三级降级策略：
-    1. 标题 ≥ 5 个 → AST 标题切分
+    四级降级策略：
+    0. 对话体检测 → 按轮次切分
+    1. 标题 ≥ 5 个 → 自适应 AST 标题切分
     2. 标题 < 5 但段落清晰 → 段落边界切分
     3. 纯文本墙 → 滑动窗口切分（20% 重叠）
 
     Args:
         text: Markdown 文本（通常为 MinerU 输出）
         doc_name: 文档名称（用于上下文注入）
-        split_level: AST 切分的标题层级（默认 2 = ##）
+        split_level: AST 切分的标题层级（0=自动检测）
         max_chars: 单块最大字数
         min_chars: 单块最小字数（低于此值向上合并）
         clean: 是否先执行噪音清洗
@@ -516,14 +579,29 @@ def chunk_markdown(
             chunks=[], strategy="empty", total_chars=0, doc_name=doc_name
         )
 
+    # 策略 0：对话体检测
+    turn_matches = list(_TURN_RE.finditer(text))
+    if len(turn_matches) >= 3:
+        strategy = "conversation_turn"
+        chunks = _chunk_by_conversation_turns(text, doc_name)
+        if chunks:
+            chunks = _split_oversized_chunks(chunks, text, [])
+            for i, c in enumerate(chunks):
+                c.index = i
+            return ChunkResult(
+                chunks=chunks, strategy=strategy,
+                total_chars=total_chars, doc_name=doc_name,
+            )
+
     # 提取标题
     headings = _extract_headings(text)
 
     # 三级降级策略选择
     if len(headings) >= MIN_HEADING_COUNT:
-        # 策略 A：AST 标题切分
+        # 策略 A：自适应 AST 标题切分
         strategy = "heading_ast"
-        chunks = _chunk_by_headings(text, doc_name, headings, split_level)
+        level = split_level if split_level > 0 else _auto_detect_split_level(text, headings)
+        chunks = _chunk_by_headings(text, doc_name, headings, level)
     elif _PARAGRAPH_SEP_RE.search(text):
         # 策略 B：段落边界切分
         strategy = "paragraph"
