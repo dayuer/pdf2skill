@@ -108,7 +108,7 @@ async def analyze_document(file: UploadFile = File(...)):
     fs.save_chunks(filter_result.kept)
     fs.save_status(phase="analyzed", total=len(filter_result.kept))
     # 保存原始 markdown（供重新切片使用）
-    (fs.session_dir / "raw.md").write_text(load_result.markdown, encoding="utf-8")
+    (fs.root / "raw.md").write_text(load_result.markdown, encoding="utf-8")
 
     # 缓存 schema 对象
     _schema_cache[session_id] = schema
@@ -181,7 +181,7 @@ async def rechunk_document(session_id: str, request: Request):
     min_chars = body.get("min_chars", 200)
 
     # 读取原始 markdown
-    md_path = fs.session_dir / "raw.md"
+    md_path = fs.root / "raw.md"
     if not md_path.exists():
         return JSONResponse({"error": "原始文档不存在，请重新上传"}, status_code=400)
 
@@ -1063,7 +1063,9 @@ function showWorkspace(data) {
   // 文档摘要
   const cc = (data.core_components||[]).map(c=>'<span class="summary-tag">'+c+'</span>').join('');
   const st = (data.skill_types||[]).map(c=>'<span class="summary-tag green">'+c+'</span>').join('');
-  const typeOpts = ['技术手册','叙事类','方法论','学术教材','操作规范'].map(t =>
+  const allTypes = ['技术手册','叙事类','方法论','学术教材','操作规范','保险合同','行业报告','医学法律'];
+  if (data.book_type && !allTypes.includes(data.book_type)) allTypes.push(data.book_type);
+  const typeOpts = allTypes.map(t =>
     '<option'+(t===data.book_type?' selected':'')+'>'+t+'</option>').join('');
   const ds = document.getElementById('doc-summary');
   ds.style.display = 'block';
