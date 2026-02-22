@@ -735,7 +735,9 @@ def _get_schema(session_id: str, fs: FileSession) -> SkillSchema:
     schema_data = fs.load_schema()
     if not schema_data:
         raise ValueError(f"会话 {session_id} 的 Schema 不存在")
+    meta = fs.load_meta() or {}
     schema = SkillSchema(
+        book_name=schema_data.get("book_name", meta.get("doc_name", "document")),
         book_type=schema_data["book_type"],
         domains=schema_data["domains"],
     )
