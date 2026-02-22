@@ -129,6 +129,48 @@ prompt_version: "v0.1"
 请提取知识图谱节点：概念定义、前置知识、核心原理、示例。
 每个概念输出为一个独立的 Skill（用 --- 分隔）。
 纯练习题或索引则输出 EMPTY_BLOCK。"""),
+
+    "保险合同": ("insurance_extractor", """以下是待提取的保险条款文本：
+
+> {context}
+
+---
+
+{content}
+
+---
+
+请提取所有保障条款、免责条款、理赔规则和赔付标准。
+每个条款/规则输出为一个独立的 Skill（用 --- 分隔）。
+纯目录或法律声明则输出 EMPTY_BLOCK。"""),
+
+    "行业报告": ("report_extractor", """以下是待提取的行业报告文本：
+
+> {context}
+
+---
+
+{content}
+
+---
+
+请提取关键数据指标、分析框架和趋势判断。
+每个数据点或分析模型输出为一个独立的 Skill（用 --- 分隔）。
+纯致谢或免责声明则输出 EMPTY_BLOCK。"""),
+
+    "医学法律": ("professional_extractor", """以下是待提取的专业文献文本：
+
+> {context}
+
+---
+
+{content}
+
+---
+
+请提取专业术语定义、判定标准和条件分支规则。
+每个术语/标准输出为一个独立的 Skill（用 --- 分隔）。
+纯参考文献或索引则输出 EMPTY_BLOCK。"""),
 }
 
 # 默认 fallback
@@ -149,7 +191,13 @@ def _resolve_prompt_type(book_type: str) -> tuple[str, str]:
         return _TYPE_PROMPT_MAP["方法论"]
     if any(kw in bt for kw in ("教材", "学术", "academic", "textbook")):
         return _TYPE_PROMPT_MAP["学术教材"]
-    if any(kw in bt for kw in ("手册", "规范", "manual", "guide", "操作")):
+    if any(kw in bt for kw in ("保险", "保单", "保障", "理赔", "insurance")):
+        return _TYPE_PROMPT_MAP["保险合同"]
+    if any(kw in bt for kw in ("报告", "研报", "白皮书", "report")):
+        return _TYPE_PROMPT_MAP["行业报告"]
+    if any(kw in bt for kw in ("医学", "法律", "金融", "medical", "legal")):
+        return _TYPE_PROMPT_MAP["医学法律"]
+    if any(kw in bt for kw in ("规范", "标准", "规程", "条例", "手册", "manual", "guide", "操作")):
         return _TYPE_PROMPT_MAP["技术手册"]
 
     return _DEFAULT_PROMPT
