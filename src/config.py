@@ -33,7 +33,7 @@ class LLMConfig:
     api_key: str = ""
     model: str = "DeepSeek-R1"
     temperature: float = 0.7
-    max_tokens: int = 8192
+    max_tokens: int = 4096
     timeout: int = 600
 
     def __post_init__(self) -> None:
@@ -46,7 +46,7 @@ class LLMConfig:
 class ChunkConfig:
     """切分配置"""
 
-    max_chunk_chars: int = 4000
+    max_chunk_chars: int = 2000
     min_chunk_chars: int = 200
     split_level: int = 2
     sliding_window_chars: int = 3000

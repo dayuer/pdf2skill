@@ -750,7 +750,8 @@ def _get_schema(session_id: str, fs: FileSession) -> SkillSchema:
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return _HTML_PAGE
+    _html_path = Path(__file__).resolve().parent.parent / "static" / "index.html"
+    return _html_path.read_text(encoding="utf-8")
 
 
 _HTML_PAGE = """<!DOCTYPE html>
