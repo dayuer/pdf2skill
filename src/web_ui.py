@@ -107,6 +107,8 @@ async def analyze_document(file: UploadFile = File(...)):
     fs.save_schema(schema)
     fs.save_chunks(filter_result.kept)
     fs.save_status(phase="analyzed", total=len(filter_result.kept))
+    # 保存原始 markdown（供重新切片使用）
+    (fs.session_dir / "raw.md").write_text(load_result.markdown, encoding="utf-8")
 
     # 缓存 schema 对象
     _schema_cache[session_id] = schema
@@ -145,10 +147,13 @@ async def update_session_settings(session_id: str, request: Request):
     body = await request.json()
     new_book_type = body.get("book_type", meta.get("book_type", ""))
     new_prompt_type = body.get("prompt_type", meta.get("prompt_type", ""))
+    new_system_prompt = body.get("system_prompt")
 
     # 更新 meta
     meta["book_type"] = new_book_type
     meta["prompt_type"] = new_prompt_type
+    if new_system_prompt is not None:
+        meta["custom_system_prompt"] = new_system_prompt
     fs._write_json("meta.json", meta)
 
     # 更新 schema
@@ -162,6 +167,56 @@ async def update_session_settings(session_id: str, request: Request):
 
     return {"ok": True, "book_type": new_book_type, "prompt_type": new_prompt_type}
 
+
+@app.post("/api/rechunk/{session_id}")
+async def rechunk_document(session_id: str, request: Request):
+    """重新切片：用户可调整切片参数后重跑。"""
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    body = await request.json()
+    max_chars = body.get("max_chars", 2000)
+    min_chars = body.get("min_chars", 200)
+
+    # 读取原始 markdown
+    md_path = fs.session_dir / "raw.md"
+    if not md_path.exists():
+        return JSONResponse({"error": "原始文档不存在，请重新上传"}, status_code=400)
+
+    raw_md = md_path.read_text(encoding="utf-8")
+    doc_name = meta.get("doc_name", "document")
+
+    # 重新切片
+    from .semantic_filter import filter_chunks
+    chunk_result = chunk_markdown(raw_md, doc_name, max_chars=max_chars, min_chars=min_chars)
+    filter_result = filter_chunks(chunk_result.chunks)
+
+    # 保存
+    fs.save_chunks(filter_result.kept)
+
+    # 更新 meta
+    meta["total_chunks"] = len(chunk_result.chunks)
+    meta["filtered_chunks"] = filter_result.kept_count
+    meta["chunk_strategy"] = chunk_result.strategy
+    fs._write_json("meta.json", meta)
+
+    return {
+        "ok": True,
+        "total_chunks": len(chunk_result.chunks),
+        "filtered_chunks": filter_result.kept_count,
+        "strategy": chunk_result.strategy,
+        "chunks": [
+            {
+                "index": c.index,
+                "heading": " > ".join(c.heading_path) if c.heading_path else f"Chunk #{c.index}",
+                "char_count": c.char_count,
+                "preview": c.content[:120],
+            }
+            for c in filter_result.kept
+        ],
+    }
 
 @app.get("/api/prompt-preview/{session_id}")
 async def prompt_preview(session_id: str):
@@ -884,7 +939,10 @@ _HTML_PAGE = """<!DOCTYPE html>
     <div id="analysis-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在分析文档类型和知识结构...</span></div>
     <div id="doc-summary" style="display:none"></div>
     <div id="chunk-panel" style="display:none; flex-direction:column; min-height:0; flex:1">
-      <input id="chunk-search" class="chunk-search" placeholder="搜索 chunk 内容…" oninput="searchChunks()">
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="chunk-search" class="chunk-search" placeholder="搜索 chunk 内容…" oninput="searchChunks()" style="flex:1">
+        <button class="btn btn-ghost btn-sm" onclick="rechunkDoc()" style="white-space:nowrap;font-size:11px">🔄 重新切片</button>
+      </div>
       <div id="chunk-count" class="chunk-count"></div>
       <div id="chunk-list" class="chunk-list"></div>
     </div>
@@ -898,11 +956,12 @@ _HTML_PAGE = """<!DOCTYPE html>
     <div id="workspace" style="display:none; flex-direction:column; min-height:0; flex:1">
       <!-- 系统 Prompt -->
       <div class="section">
-        <div class="section-title" style="cursor:pointer" onclick="document.getElementById('sys-prompt-wrap').style.display=document.getElementById('sys-prompt-wrap').style.display==='none'?'block':'none'">🔍 系统 Prompt（点击展开/编辑）</div>
-        <div id="sys-prompt-wrap" style="display:none">
-          <textarea id="system-prompt-display" class="prompt-textarea" style="min-height:160px;font-size:12px;color:#a1a1aa"></textarea>
-          <div style="font-size:11px;color:#52525b;margin-top:4px">✏️ 可直接编辑系统 Prompt，修改后点击「提取并对比」生效</div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="section-title">🔍 系统 Prompt</div>
+          <button class="btn btn-ghost btn-sm" onclick="saveSystemPrompt()">💾 保存</button>
         </div>
+        <textarea id="system-prompt-display" class="prompt-textarea" style="min-height:180px;font-size:12px;color:#a1a1aa"></textarea>
+        <div style="font-size:11px;color:#52525b;margin-top:4px">✏️ 可直接编辑系统 Prompt，修改后点击「提取并对比」生效</div>
       </div>
 
       <!-- Prompt 编辑器 -->
@@ -1037,10 +1096,48 @@ async function saveSettings() {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ book_type: document.getElementById('sel-book-type')?.value||'' })
   });
+  // 切换类型后同步刷新 system prompt + baseline hint
+  try {
+    const r = await fetch('/api/prompt-preview/'+sessionId);
+    const pp = await r.json();
+    if (pp.system_prompt) document.getElementById('system-prompt-display').value = pp.system_prompt;
+    if (pp.baseline_hint) document.getElementById('prompt-hint').value = pp.baseline_hint;
+  } catch(e) {}
+}
+
+async function saveSystemPrompt() {
+  if (!sessionId) return;
+  const sp = document.getElementById('system-prompt-display').value.trim();
+  await fetch('/api/session/'+sessionId+'/settings', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ system_prompt: sp })
+  });
+  const btn = event.target;
+  btn.textContent = '✅ 已保存';
+  setTimeout(() => { btn.textContent = '💾 保存'; }, 1500);
 }
 
 // ── Chunk 列表 ──
 let _searchTimer = null;
+async function rechunkDoc() {
+  if (!sessionId) return;
+  const btn = event.target; btn.disabled = true; btn.textContent = '⏳ 切片中…';
+  try {
+    const r = await fetch('/api/rechunk/'+sessionId, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ max_chars: 2000, min_chars: 200 })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      btn.textContent = '✅ '+d.filtered_chunks+' 块';
+      setTimeout(() => { btn.textContent = '🔄 重新切片'; btn.disabled = false; }, 1500);
+      loadChunkList();
+    } else {
+      btn.textContent = '❌ ' + (d.error||'失败'); btn.disabled = false;
+    }
+  } catch(e) { btn.textContent = '❌ 网络错误'; btn.disabled = false; }
+}
+
 async function loadChunkList(q) {
   try {
     const params = q ? '?q='+encodeURIComponent(q)+'&page_size=50' : '?page_size=50';

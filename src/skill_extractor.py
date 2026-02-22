@@ -193,6 +193,28 @@ _BASELINE_HINTS: dict[str, str] = {
         "3. 提取条件分支：IF 条件 THEN 处理方式\n"
         "4. 忽略法律声明和附录"
     ),
+    "保险合同": (
+        "## 提取策略\n"
+        "1. 提取每条规范的完整描述（编号 + 条文 + 适用范围）\n"
+        "2. 保留判定标准和阈值\n"
+        "3. 提取条件分支：IF 条件 THEN 处理方式\n"
+        "4. 忽略法律声明和附录\n"
+        "5. 提取保障范围、免责条款、理赔条件和赔付标准"
+    ),
+    "行业报告": (
+        "## 提取策略\n"
+        "1. 提取数据+分析框架，保留关键指标和趋势判断\n"
+        "2. 表格/图表中的数据转为结构化键值对\n"
+        "3. 提取方法论：分析模型、评估维度、权重指标\n"
+        "4. 忽略目录、致谢、免责声明"
+    ),
+    "医学法律": (
+        "## 提取策略\n"
+        "1. 提取专业术语定义及其适用语境\n"
+        "2. 保留剂量、阈值、判定标准等关键数字\n"
+        "3. 提取条件分支：IF 症状/条件 THEN 处理方案\n"
+        "4. 区分必须项 vs 建议项 vs 禁忌项"
+    ),
 }
 
 
@@ -209,6 +231,14 @@ def generate_baseline_hint(book_type: str) -> str:
         return _BASELINE_HINTS["方法论"]
     if any(kw in bt for kw in ("教材", "学术")):
         return _BASELINE_HINTS["学术教材"]
+    if any(kw in bt for kw in ("保险", "保单", "保障", "理赔", "insurance")):
+        return _BASELINE_HINTS["保险合同"]
+    if any(kw in bt for kw in ("报告", "研报", "白皮书", "report")):
+        return _BASELINE_HINTS["行业报告"]
+    if any(kw in bt for kw in ("医学", "法律", "金融", "medical", "legal")):
+        return _BASELINE_HINTS["医学法律"]
+    if any(kw in bt for kw in ("规范", "标准", "规程", "条例")):
+        return _BASELINE_HINTS["操作规范"]
 
     return _BASELINE_HINTS["技术手册"]
 
@@ -268,7 +298,7 @@ def extract_skill_from_chunk(
         prompt_name = "table_extractor"
 
     # 用户自定义 system prompt 优先
-    if system_prompt_override.strip():
+    if system_prompt_override and system_prompt_override.strip():
         system = system_prompt_override
     else:
         system = _load_system_prompt(prompt_name, prompt_version, constraint)
