@@ -247,6 +247,7 @@ async def tune_chunk(session_id: str, request: Request):
     body = await request.json()
     chunk_index = body.get("chunk_index", 0)
     prompt_hint = body.get("prompt_hint", "")
+    system_prompt_override = body.get("system_prompt", "")
 
     # 加载指定 chunk
     target = fs.load_chunks_by_indices([chunk_index])
@@ -260,7 +261,8 @@ async def tune_chunk(session_id: str, request: Request):
     # 同步提取（单 chunk，无需异步并发）
     client = DeepSeekClient()
     raw_skills = extract_skill_from_chunk(
-        chunk, schema, client=client, prompt_hint=prompt_hint
+        chunk, schema, client=client, prompt_hint=prompt_hint,
+        system_prompt_override=system_prompt_override,
     )
 
     # 校验
@@ -896,10 +898,11 @@ _HTML_PAGE = """<!DOCTYPE html>
     <div id="workspace" style="display:none; flex-direction:column; min-height:0; flex:1">
       <!-- 系统 Prompt -->
       <div class="section">
-        <details>
-          <summary class="section-title" style="cursor:pointer">🔍 系统 Prompt（点击展开）</summary>
-          <div id="system-prompt-display" class="prompt-display"></div>
-        </details>
+        <div class="section-title" style="cursor:pointer" onclick="document.getElementById('sys-prompt-wrap').style.display=document.getElementById('sys-prompt-wrap').style.display==='none'?'block':'none'">🔍 系统 Prompt（点击展开/编辑）</div>
+        <div id="sys-prompt-wrap" style="display:none">
+          <textarea id="system-prompt-display" class="prompt-textarea" style="min-height:160px;font-size:12px;color:#a1a1aa"></textarea>
+          <div style="font-size:11px;color:#52525b;margin-top:4px">✏️ 可直接编辑系统 Prompt，修改后点击「提取并对比」生效</div>
+        </div>
       </div>
 
       <!-- Prompt 编辑器 -->
@@ -1016,7 +1019,7 @@ function showWorkspace(data) {
 
   // Baseline hint + system prompt
   if (data.baseline_hint) document.getElementById('prompt-hint').value = data.baseline_hint;
-  if (data.system_prompt) document.getElementById('system-prompt-display').textContent = data.system_prompt;
+  if (data.system_prompt) document.getElementById('system-prompt-display').value = data.system_prompt;
 
   // Chunk 列表
   document.getElementById('chunk-panel').style.display = 'flex';
@@ -1078,7 +1081,7 @@ async function runTune() {
   try {
     const r = await fetch('/api/tune/'+sessionId, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ chunk_index: selectedChunkIdx, prompt_hint: hint })
+      body: JSON.stringify({ chunk_index: selectedChunkIdx, prompt_hint: hint, system_prompt: document.getElementById('system-prompt-display').value.trim() })
     });
     const d = await r.json();
     showTuneResult(d);
@@ -1219,7 +1222,7 @@ function startExecute() {
         if (pp.baseline_hint && !document.getElementById('prompt-hint').value) {
           document.getElementById('prompt-hint').value = pp.baseline_hint;
         }
-        document.getElementById('system-prompt-display').textContent = pp.system_prompt || '';
+        document.getElementById('system-prompt-display').value = pp.system_prompt || '';
       }
     } catch(e) {}
   } catch(e) { localStorage.removeItem('pdf2skill_session'); }

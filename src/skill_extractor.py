@@ -254,6 +254,7 @@ def extract_skill_from_chunk(
     client: Optional[DeepSeekClient] = None,
     prompt_version: str = "v0.1",
     prompt_hint: str = "",
+    system_prompt_override: str = "",
 ) -> list[RawSkill]:
     """从单个文本块中提取 Skill（同步）。"""
     if client is None:
@@ -266,7 +267,11 @@ def extract_skill_from_chunk(
     if _is_table_heavy(chunk.content):
         prompt_name = "table_extractor"
 
-    system = _load_system_prompt(prompt_name, prompt_version, constraint)
+    # 用户自定义 system prompt 优先
+    if system_prompt_override.strip():
+        system = system_prompt_override
+    else:
+        system = _load_system_prompt(prompt_name, prompt_version, constraint)
 
     # 用户调优指令注入
     if prompt_hint:
