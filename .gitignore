@@ -1,0 +1,34 @@
+# ── OS ──────────────────────────────────────────
+.DS_Store
+
+# ── Python ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# ── IDE ─────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+
+# ── 环境变量 ────────────────────────────────────
+.env
+.env.*
+
+# ── 运行时数据（目录保留，内容忽略）───────────
+input/*
+!input/.gitkeep
+uploads/*
+!uploads/.gitkeep
+output/*
+!output/.gitkeep
+sessions/*
+!sessions/.gitkeep
+logs/*.jsonl
+
+# ── Agent 配置（本地专属）──────────────────────
+AGENTS.md
+GEMINI.md
