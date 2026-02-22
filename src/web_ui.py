@@ -716,7 +716,16 @@ _HTML_PAGE = """<!DOCTYPE html>
   .phase-card.active { border-color: #7c3aed; box-shadow: 0 0 20px rgba(124,58,237,0.15); }
   .phase-card.done { border-color: #22c55e; opacity: 0.85; }
   .phase-card.hidden { display: none; }
-  .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .phase-card.collapsed > *:not(.phase-header) { display: none !important; }
+  .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; position: relative; }
+  .phase-toggle {
+    position: absolute; right: 0; top: 0;
+    background: none; border: none; color: #71717a; font-size: 18px;
+    cursor: pointer; padding: 4px 8px; transition: transform 0.2s;
+  }
+  .phase-toggle:hover { color: #c084fc; }
+  .phase-card.collapsed .phase-toggle { transform: rotate(180deg); }
+  .phase-card.collapsed .phase-header { margin-bottom: 0; }
   .phase-number {
     width: 32px; height: 32px; border-radius: 50%;
     background: #27272a; color: #71717a;
@@ -838,7 +847,7 @@ _HTML_PAGE = """<!DOCTYPE html>
 
   <!-- 阶段 1 -->
   <div id="phase1" class="phase-card active">
-    <div class="phase-header"><div class="phase-number">1</div><div class="phase-title">上传文档 · 类型检测</div></div>
+    <div class="phase-header"><div class="phase-number">1</div><div class="phase-title">上传文档 · 类型检测</div><button class="phase-toggle" onclick="togglePhase('phase1')">▲</button></div>
     <div id="upload-area">
       <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📄</div>
@@ -848,11 +857,14 @@ _HTML_PAGE = """<!DOCTYPE html>
     </div>
     <div id="analysis-loading" style="display:none" class="loading-text"><div class="spinner"></div><span>R1 正在分析文档类型和知识结构...</span></div>
     <div id="analysis-result" style="display:none"></div>
+    <div id="reupload-wrap" style="display:none; margin-top:12px; text-align:right">
+      <button class="btn btn-ghost btn-sm" onclick="resetSession()">📄 重新上传文件</button>
+    </div>
   </div>
 
   <!-- 阶段 2：深度调优 -->
   <div id="phase2" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">2</div><div class="phase-title">深度调优 · 原文对比</div></div>
+    <div class="phase-header"><div class="phase-number">2</div><div class="phase-title">深度调优 · 原文对比</div><button class="phase-toggle" onclick="togglePhase('phase2')">▲</button></div>
     <div id="tune-controls">
       <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px">
         <label style="font-size:13px; color:#71717a; white-space:nowrap">选择文本块</label>
@@ -883,7 +895,7 @@ _HTML_PAGE = """<!DOCTYPE html>
 
   <!-- 阶段 3：随机抽样验证 -->
   <div id="phase3" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">3</div><div class="phase-title">随机抽样验证</div></div>
+    <div class="phase-header"><div class="phase-number">3</div><div class="phase-title">随机抽样验证</div><button class="phase-toggle" onclick="togglePhase('phase3')">▲</button></div>
     <div style="display:flex; gap:12px; align-items:center;">
       <button class="btn btn-primary" onclick="runSampleCheck()">🎲 随机抽样 5 个 chunk</button>
       <button class="btn btn-ghost btn-sm" onclick="goToExecute()">⚡ 跳过验证，直接全量</button>
@@ -894,7 +906,7 @@ _HTML_PAGE = """<!DOCTYPE html>
 
   <!-- 阶段 4：全量执行 -->
   <div id="phase4" class="phase-card hidden">
-    <div class="phase-header"><div class="phase-number">4</div><div class="phase-title">全量执行 · 实时结果</div></div>
+    <div class="phase-header"><div class="phase-number">4</div><div class="phase-title">全量执行 · 实时结果</div><button class="phase-toggle" onclick="togglePhase('phase4')">▲</button></div>
     <div id="execute-progress" style="display:none"></div>
     <div id="execute-result" style="display:none"></div>
   </div>
@@ -902,6 +914,15 @@ _HTML_PAGE = """<!DOCTYPE html>
 
 <script>
 let sessionId = localStorage.getItem('pdf2skill_session');
+
+function togglePhase(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+function resetSession() {
+  localStorage.removeItem('pdf2skill_session');
+  location.reload();
+}
 
 // ── 上传 ──
 const fileInput = document.getElementById('fileInput');
@@ -962,6 +983,8 @@ ${st?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类型</
   });
   document.getElementById('sel-prompt-type').addEventListener('change', saveSettings);
   document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
+  document.getElementById('phase1').classList.add('collapsed');
+  document.getElementById('reupload-wrap').style.display = 'block';
   document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
 
   // 预填 baseline hint
@@ -1206,6 +1229,8 @@ ${stags?`<div class="summary-title" style="margin-top:8px">可提取 Skill 类�
       <div class="info-item"><div class="info-label">提取策略</div><div class="info-value highlight">${m.prompt_type}</div></div>
     </div>`;
     document.getElementById('phase1').classList.remove('active'); document.getElementById('phase1').classList.add('done');
+    document.getElementById('phase1').classList.add('collapsed');
+    document.getElementById('reupload-wrap').style.display = 'block';
     document.getElementById('phase2').classList.remove('hidden'); document.getElementById('phase2').classList.add('active');
     loadChunkSelector();
     loadTuneHistory();
