@@ -257,7 +257,7 @@ async def _queue_worker(notebook_id: str) -> None:
 
 
 # ══════════════════════════════════════════════
-# 批量上传端点
+# 批量上传端点（只存文件，不做处理）
 # ══════════════════════════════════════════════
 
 
@@ -266,7 +266,9 @@ async def batch_upload(
     files: List[UploadFile] = File(...),
     notebook_id: Optional[str] = None,
 ):
-    """批量上传文件 → 立即返回 notebook_id + 文件列表 → 后台队列依次处理。
+    """批量上传文件 → 只做存盘 + 去重 → 立即返回。
+
+    文本处理需要单独调用 POST /api/process/{notebook_id}。
 
     Args:
         files: 上传的文件列表
@@ -276,19 +278,70 @@ async def batch_upload(
         notebook_id = generate_notebook_id()
     nb = FileNotebook(notebook_id)
 
+    saved = []
+    skipped = []
+    for f in files:
+        filename = f.filename or "doc"
+        file_bytes = await f.read()
+
+        # 去重
+        file_hash = nb.file_hash(file_bytes)
+        if nb.is_duplicate(file_hash):
+            skipped.append({"filename": filename, "reason": "duplicate"})
+            continue
+
+        # 存盘
+        saved_path = nb.upload_dir / filename
+        saved_path.write_bytes(file_bytes)
+        nb.register_file(filename, file_hash)
+        saved.append({"filename": filename, "size": len(file_bytes)})
+
+    return {
+        "notebook_id": notebook_id,
+        "saved": saved,
+        "skipped": skipped,
+        "total_saved": len(saved),
+        "total_skipped": len(skipped),
+        "message": f"已保存 {len(saved)} 个文件" + (f"，跳过 {len(skipped)} 个重复" if skipped else "") + "。",
+    }
+
+
+# ══════════════════════════════════════════════
+# 文档处理端点（文本化 + LLM 整理 + chunk + schema）
+# ══════════════════════════════════════════════
+
+
+@router.post("/process/{notebook_id}")
+async def process_documents(notebook_id: str):
+    """对 upload/ 中所有未处理的文件触发文本化处理（后台队列）。
+
+    处理流程：文本提取 → LLM 格式整理 → 合并 → chunk → schema。
+    通过 GET /api/upload/progress/{notebook_id} 监听 SSE 进度。
+    """
+    nb = FileNotebook(notebook_id)
+    if not nb.root.exists():
+        from fastapi import HTTPException
+        raise HTTPException(404, "笔记本不存在")
+
+    # 收集 upload/ 下所有未处理文件
+    files_to_process = []
+    for f in sorted(nb.upload_dir.iterdir()):
+        if f.is_file() and not f.name.startswith("."):
+            files_to_process.append(f)
+
+    if not files_to_process:
+        return {"notebook_id": notebook_id, "message": "没有需要处理的文件"}
+
     # 创建队列
     queue: asyncio.Queue = asyncio.Queue()
     _upload_queues[notebook_id] = queue
     _upload_status[notebook_id] = {}
 
-    file_list = []
-    for f in files:
-        filename = f.filename or "doc"
-        file_bytes = await f.read()
-        await queue.put((filename, file_bytes))
-        _update_file_status(notebook_id, filename, status="queued", message="排队中",
+    for f in files_to_process:
+        file_bytes = f.read_bytes()
+        await queue.put((f.name, file_bytes))
+        _update_file_status(notebook_id, f.name, status="queued", message="排队中",
                             size=len(file_bytes))
-        file_list.append({"filename": filename, "size": len(file_bytes)})
 
     # 启动后台 worker
     task = asyncio.create_task(_queue_worker(notebook_id))
@@ -296,9 +349,9 @@ async def batch_upload(
 
     return {
         "notebook_id": notebook_id,
-        "total_files": len(file_list),
-        "files": file_list,
-        "message": f"已提交 {len(file_list)} 个文件，后台处理中。",
+        "total_files": len(files_to_process),
+        "files": [f.name for f in files_to_process],
+        "message": f"已启动 {len(files_to_process)} 个文件的处理队列。",
     }
 
 

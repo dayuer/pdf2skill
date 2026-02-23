@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 
 const FILE_ACCEPT = '.pdf,.txt,.epub,.md,.docx,.doc,.xlsx,.xls,.csv';
 
-export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUpload, uploadProgress, onSearch, onSelectChunk, selectedChunk }) {
+export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUpload, onStartProcessing, uploadProgress, onSearch, onSelectChunk, selectedChunk }) {
   const fileRef = useRef();
   const [viewingChunk, setViewingChunk] = useState(null);
 
@@ -86,12 +86,21 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
               <span className="upload-progress-status">{info.message}</span>
             </div>
           ))}
-          {uploadProgress.__overall__?.status === 'done' && (
+          {uploadProgress?.__overall__?.status === 'done' && (
             <div className="upload-progress-summary">
               ✅ {uploadProgress.__overall__.total_files} 个文件处理完成
               · {uploadProgress.__overall__.filtered_chunks} 个有效分块
             </div>
           )}
+        </div>
+      )}
+
+      {/* 开始处理按钮 — 上传完成但未处理时显示 */}
+      {uploadProgress?.__upload__?.saved?.length > 0 && !uploadProgress?.__overall__ && !loading?.upload && (
+        <div style={{ margin: '0 16px 12px' }}>
+          <button className="btn-process" onClick={onStartProcessing}>
+            ▶ 开始处理 ({uploadProgress.__upload__.saved.length} 个文件)
+          </button>
         </div>
       )}
 

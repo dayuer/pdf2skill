@@ -10,11 +10,18 @@ export async function uploadFile(file) {
   return r.json();
 }
 
-export async function uploadFiles(files) {
+export async function uploadFiles(files, notebookId) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
+  if (notebookId) fd.append('notebook_id', notebookId);
   const r = await fetch(`${BASE}/api/upload`, { method: 'POST', body: fd });
   if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
+  return r.json();
+}
+
+export async function processDocuments(notebookId) {
+  const r = await fetch(`${BASE}/api/process/${notebookId}`, { method: 'POST' });
+  if (!r.ok) throw new Error((await r.json()).detail || '处理失败');
   return r.json();
 }
 

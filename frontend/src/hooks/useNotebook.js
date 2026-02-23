@@ -48,29 +48,43 @@ export function useNotebook() {
     } finally { setLoading(l => ({ ...l, upload: false })); }
   }, [persistNotebook]);
 
-  // 批量上传 + SSE 进度
+  // 批量上传（只存文件，不做处理）
   const [uploadProgress, setUploadProgress] = useState(null);
   const progressCleanupRef = useRef(null);
 
   const batchUpload = useCallback(async (files) => {
     setLoading(l => ({ ...l, upload: true }));
+    try {
+      const data = await api.uploadFiles(files, notebookId);
+      persistNotebook(data.notebook_id);
+      setUploadProgress({ __upload__: { saved: data.saved, skipped: data.skipped } });
+      setLoading(l => ({ ...l, upload: false }));
+      return data;
+    } catch (e) {
+      setLoading(l => ({ ...l, upload: false }));
+      throw e;
+    }
+  }, [notebookId, persistNotebook]);
+
+  // 触发文档处理（文本化 + LLM 整理 + chunk + schema）
+  const startProcessing = useCallback(async () => {
+    if (!notebookId) return;
+    setLoading(l => ({ ...l, upload: true }));
     setUploadProgress({});
     try {
-      const data = await api.uploadFiles(files);
-      persistNotebook(data.notebook_id);
+      await api.processDocuments(notebookId);
 
       // 监听 SSE 进度
-      const cleanup = api.watchUploadProgress(data.notebook_id, {
+      const cleanup = api.watchUploadProgress(notebookId, {
         onProgress: (status) => setUploadProgress(status),
         onDone: async (overall) => {
           setUploadProgress(prev => ({ ...prev, __overall__: overall }));
           setLoading(l => ({ ...l, upload: false }));
-          // 加载最终状态
-          const st = await api.getSessionState(data.notebook_id).catch(() => null);
+          const st = await api.getSessionState(notebookId).catch(() => null);
           if (st?.meta) setMeta(st.meta);
-          const cs = await api.loadChunks(data.notebook_id).catch(() => ({ items: [], total: 0 }));
+          const cs = await api.loadChunks(notebookId).catch(() => ({ items: [], total: 0 }));
           setChunks(cs);
-          const pp = await api.getPromptPreview(data.notebook_id).catch(() => null);
+          const pp = await api.getPromptPreview(notebookId).catch(() => null);
           if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
           if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
         },
@@ -80,12 +94,11 @@ export function useNotebook() {
         },
       });
       progressCleanupRef.current = cleanup;
-      return data;
     } catch (e) {
       setLoading(l => ({ ...l, upload: false }));
       throw e;
     }
-  }, [persistNotebook]);
+  }, [notebookId]);
 
   // 加载 chunks
   const loadChunks = useCallback(async (q) => {
@@ -191,7 +204,7 @@ export function useNotebook() {
     tuneResult, setTuneResult, tuneHistory,
     sampleResult, executeState, skills, loading,
     systemPrompt, setSystemPrompt, promptHint, setPromptHint,
-    upload, batchUpload, uploadProgress, loadChunks, doRechunk, doTune, doSample, doExecute,
+    upload, batchUpload, startProcessing, uploadProgress, loadChunks, doRechunk, doTune, doSample, doExecute,
     loadSkills, doSaveSettings, reset,
   };
 }
