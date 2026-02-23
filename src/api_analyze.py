@@ -1,12 +1,13 @@
-"""阶段一：文档上传 / 分析 / 设置 / 重切 / Prompt 预览
+"""阶段一：文档上传 / 处理 / 设置 / 重切 / Prompt 预览
 
-上传流程：
-1. POST /api/upload（批量）— 接收多文件，立即返回任务 ID，后台队列依次处理
-2. GET /api/upload/progress/{notebook_id}（SSE）— 实时推送每个文件的处理进度
-3. POST /api/analyze（单文件同步）— 向后兼容，阻塞直到处理完成
+上传与处理流程（全自动）：
+1. POST /api/upload — 存文件 + 去重 + 写 _progress.json + 自动开始处理
+2. GET /api/upload/progress/{id} — SSE 实时推送处理进度
+3. GET /api/upload/{id}/files — 文件列表（含状态 + 已处理文本）
+4. POST /api/reprocess/{id}/{filename} — 重新处理单个文件
 
-批量处理队列（asyncio.Queue）：
-  去重(SHA-256) → 保存 upload/ → 文本化 → LLM 格式整理 → 合并 chunks → Schema
+进度文件 upload/_progress.json：
+  { "file.pdf": {"status": "done", "chars": 12345, "updated_at": ...}, ... }
 """
 
 from __future__ import annotations
@@ -14,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 
 from .config import config
@@ -39,11 +41,6 @@ _log = logging.getLogger(__name__)
 # 内存缓存
 _schema_cache: dict[str, SkillSchema] = {}
 
-# ── 处理队列 ──
-# 每个 notebook 一个队列，存储待处理文件
-_upload_queues: dict[str, asyncio.Queue] = {}
-# 每个 notebook 的文件处理状态 {notebook_id: {filename: {status, message, ...}}}
-_upload_status: dict[str, dict[str, dict]] = {}
 # 活跃的 worker task
 _worker_tasks: dict[str, asyncio.Task] = {}
 
@@ -89,7 +86,6 @@ def _cleanup_text_sync(raw_md: str) -> str:
             temperature=0.1,
         ).content
 
-    # 长文本分段
     paragraphs = raw_md.split("\n\n")
     chunks: list[str] = []
     current: list[str] = []
@@ -118,37 +114,56 @@ def _cleanup_text_sync(raw_md: str) -> str:
     return "\n\n".join(cleaned)
 
 
-def _update_file_status(notebook_id: str, filename: str, **kwargs) -> None:
-    """更新单个文件的处理状态。"""
-    if notebook_id not in _upload_status:
-        _upload_status[notebook_id] = {}
-    if filename not in _upload_status[notebook_id]:
-        _upload_status[notebook_id][filename] = {}
-    _upload_status[notebook_id][filename].update(kwargs)
+# ══════════════════════════════════════════════
+# 进度文件 — upload/_progress.json
+# ══════════════════════════════════════════════
+
+_PROGRESS_FILE = "_progress.json"
 
 
-def _process_single_file(nb: FileNotebook, filename: str, file_bytes: bytes) -> dict:
-    """处理单个文件（CPU 密集 + LLM 调用）。返回处理结果摘要。"""
-    notebook_id = nb.notebook_id
+def _load_progress(nb: FileNotebook) -> dict:
+    """读取 upload/_progress.json"""
+    path = nb.upload_dir / _PROGRESS_FILE
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
 
-    # 去重
-    file_hash = nb.file_hash(file_bytes)
-    if nb.is_duplicate(file_hash):
-        return {"status": "skipped", "reason": "duplicate", "filename": filename}
 
-    # 保存源文件
-    _update_file_status(notebook_id, filename, status="saving", message="保存文件")
-    saved_path = nb.upload_dir / filename
-    saved_path.write_bytes(file_bytes)
-    nb.register_file(filename, file_hash)
+def _save_progress(nb: FileNotebook, progress: dict) -> None:
+    """写入 upload/_progress.json"""
+    (nb.upload_dir / _PROGRESS_FILE).write_text(
+        json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-    # 文本化
-    _update_file_status(notebook_id, filename, status="extracting", message="提取文本")
-    load_result = load_document(str(saved_path))
+
+def _set_file_progress(nb: FileNotebook, filename: str, **kwargs) -> None:
+    """更新单个文件的进度"""
+    progress = _load_progress(nb)
+    if filename not in progress:
+        progress[filename] = {}
+    progress[filename].update(kwargs, updated_at=time.time())
+    _save_progress(nb, progress)
+
+
+# ══════════════════════════════════════════════
+# 单文件处理逻辑
+# ══════════════════════════════════════════════
+
+
+def _process_single_file(nb: FileNotebook, filename: str) -> dict:
+    """处理 upload/ 中的单个文件 → raw + clean text。返回处理结果。"""
+    filepath = nb.upload_dir / filename
+
+    # 文本提取
+    _set_file_progress(nb, filename, status="extracting", message="提取文本")
+    load_result = load_document(str(filepath))
     nb.save_raw_text(load_result.markdown, source_name=filename)
 
     # LLM 格式整理
-    _update_file_status(notebook_id, filename, status="cleaning", message="LLM 格式整理")
+    _set_file_progress(nb, filename, status="cleaning", message="LLM 格式整理")
     try:
         clean_md = _cleanup_text_sync(load_result.markdown)
         nb.save_clean_text(clean_md, source_name=filename)
@@ -156,13 +171,13 @@ def _process_single_file(nb: FileNotebook, filename: str, file_bytes: bytes) -> 
         _log.warning(f"LLM 文本整理失败 [{filename}]: {e}")
         clean_md = load_result.markdown
 
-    _update_file_status(notebook_id, filename, status="done", message="完成",
-                        doc_name=load_result.doc_name,
-                        format=load_result.format.value,
-                        chars=len(clean_md))
+    _set_file_progress(nb, filename, status="done", message="完成",
+                       doc_name=load_result.doc_name,
+                       format=load_result.format.value,
+                       chars=len(clean_md))
 
     return {
-        "status": "processed",
+        "status": "done",
         "filename": filename,
         "doc_name": load_result.doc_name,
         "format": load_result.format.value,
@@ -171,42 +186,35 @@ def _process_single_file(nb: FileNotebook, filename: str, file_bytes: bytes) -> 
     }
 
 
-async def _queue_worker(notebook_id: str) -> None:
-    """后台队列 worker — 依次处理每个文件，处理完后合并做 chunk + schema。"""
-    queue = _upload_queues[notebook_id]
+async def _auto_process_worker(notebook_id: str) -> None:
+    """后台 worker — 依次处理 _progress.json 中 pending 的文件，处理完后合并 chunk + schema。"""
     nb = FileNotebook(notebook_id)
+    progress = _load_progress(nb)
     all_results: list[dict] = []
 
-    while True:
-        try:
-            item = queue.get_nowait()
-        except asyncio.QueueEmpty:
-            break
+    # 找出所有 pending 的文件
+    pending = [f for f, info in progress.items() if info.get("status") == "pending"]
 
-        filename, file_bytes = item
-        _update_file_status(notebook_id, filename, status="queued", message="排队中")
-
-        # 在线程池中执行 CPU/IO 密集操作
+    for filename in pending:
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, _process_single_file, nb, filename, file_bytes
-        )
-        all_results.append(result)
-        queue.task_done()
+        try:
+            result = await loop.run_in_executor(None, _process_single_file, nb, filename)
+            all_results.append(result)
+        except Exception as e:
+            _log.error(f"处理文件失败 [{filename}]: {e}")
+            _set_file_progress(nb, filename, status="error", message=str(e))
 
     # 所有文件处理完成 → 合并文本 → chunk + schema
-    processed = [r for r in all_results if r["status"] == "processed"]
+    processed = [r for r in all_results if r["status"] == "done"]
     if not processed:
-        _update_file_status(notebook_id, "__overall__", status="done", message="无新文件需要处理")
+        _worker_tasks.pop(notebook_id, None)
         return
 
-    _update_file_status(notebook_id, "__overall__", status="chunking", message="切分 + Schema 生成")
+    _set_file_progress(nb, "__overall__", status="chunking", message="切分 + Schema 生成")
 
-    # 合并所有文件的 clean 文本
     merged_md = "\n\n---\n\n".join(r["clean_md"] for r in processed)
     primary = processed[0]
 
-    # chunk + filter + schema（在线程池执行）
     def _finalize():
         chunk_result = chunk_markdown(
             merged_md, primary["doc_name"],
@@ -244,20 +252,16 @@ async def _queue_worker(notebook_id: str) -> None:
         nb.save_prompt("extraction_hint", baseline_hint)
     _schema_cache[notebook_id] = schema
 
-    _update_file_status(notebook_id, "__overall__", status="done", message="全部完成",
-                        total_files=len(processed),
-                        skipped=len(all_results) - len(processed),
-                        total_chunks=len(chunk_result.chunks),
-                        filtered_chunks=len(filter_result.kept),
-                        book_type=schema.book_type,
-                        domains=schema.domains)
+    _set_file_progress(nb, "__overall__", status="done", message="全部完成",
+                       total_files=len(processed),
+                       total_chunks=len(chunk_result.chunks),
+                       filtered_chunks=len(filter_result.kept))
 
-    # 清理
     _worker_tasks.pop(notebook_id, None)
 
 
 # ══════════════════════════════════════════════
-# 批量上传端点（只存文件，不做处理）
+# 上传端点（存文件 + 自动开始处理）
 # ══════════════════════════════════════════════
 
 
@@ -266,9 +270,7 @@ async def batch_upload(
     files: List[UploadFile] = File(...),
     notebook_id: Optional[str] = None,
 ):
-    """批量上传文件 → 只做存盘 + 去重 → 立即返回。
-
-    文本处理需要单独调用 POST /api/process/{notebook_id}。
+    """批量上传文件 → 存盘 + 去重 + 写进度文件 + 自动开始处理。
 
     Args:
         files: 上传的文件列表
@@ -278,8 +280,10 @@ async def batch_upload(
         notebook_id = generate_notebook_id()
     nb = FileNotebook(notebook_id)
 
+    progress = _load_progress(nb)
     saved = []
     skipped = []
+
     for f in files:
         filename = f.filename or "doc"
         file_bytes = await f.read()
@@ -291,10 +295,23 @@ async def batch_upload(
             continue
 
         # 存盘
-        saved_path = nb.upload_dir / filename
-        saved_path.write_bytes(file_bytes)
+        (nb.upload_dir / filename).write_bytes(file_bytes)
         nb.register_file(filename, file_hash)
         saved.append({"filename": filename, "size": len(file_bytes)})
+
+        # 标记为 pending
+        progress[filename] = {"status": "pending", "message": "等待处理", "updated_at": time.time()}
+
+    _save_progress(nb, progress)
+
+    # 自动启动后台处理
+    if saved:
+        # 取消可能正在运行的旧 worker
+        old_task = _worker_tasks.get(notebook_id)
+        if old_task and not old_task.done():
+            old_task.cancel()
+        task = asyncio.create_task(_auto_process_worker(notebook_id))
+        _worker_tasks[notebook_id] = task
 
     return {
         "notebook_id": notebook_id,
@@ -302,80 +319,90 @@ async def batch_upload(
         "skipped": skipped,
         "total_saved": len(saved),
         "total_skipped": len(skipped),
-        "message": f"已保存 {len(saved)} 个文件" + (f"，跳过 {len(skipped)} 个重复" if skipped else "") + "。",
-    }
-
-
-# ══════════════════════════════════════════════
-# 文档处理端点（文本化 + LLM 整理 + chunk + schema）
-# ══════════════════════════════════════════════
-
-
-@router.post("/process/{notebook_id}")
-async def process_documents(notebook_id: str):
-    """对 upload/ 中所有未处理的文件触发文本化处理（后台队列）。
-
-    处理流程：文本提取 → LLM 格式整理 → 合并 → chunk → schema。
-    通过 GET /api/upload/progress/{notebook_id} 监听 SSE 进度。
-    """
-    nb = FileNotebook(notebook_id)
-    if not nb.root.exists():
-        from fastapi import HTTPException
-        raise HTTPException(404, "笔记本不存在")
-
-    # 收集 upload/ 下所有未处理文件
-    files_to_process = []
-    for f in sorted(nb.upload_dir.iterdir()):
-        if f.is_file() and not f.name.startswith("."):
-            files_to_process.append(f)
-
-    if not files_to_process:
-        return {"notebook_id": notebook_id, "message": "没有需要处理的文件"}
-
-    # 创建队列
-    queue: asyncio.Queue = asyncio.Queue()
-    _upload_queues[notebook_id] = queue
-    _upload_status[notebook_id] = {}
-
-    for f in files_to_process:
-        file_bytes = f.read_bytes()
-        await queue.put((f.name, file_bytes))
-        _update_file_status(notebook_id, f.name, status="queued", message="排队中",
-                            size=len(file_bytes))
-
-    # 启动后台 worker
-    task = asyncio.create_task(_queue_worker(notebook_id))
-    _worker_tasks[notebook_id] = task
-
-    return {
-        "notebook_id": notebook_id,
-        "total_files": len(files_to_process),
-        "files": [f.name for f in files_to_process],
-        "message": f"已启动 {len(files_to_process)} 个文件的处理队列。",
+        "message": f"已保存 {len(saved)} 个文件，开始处理。" if saved else "无新文件。",
     }
 
 
 @router.get("/upload/progress/{notebook_id}")
-async def upload_progress(notebook_id: str):
-    """SSE — 实时推送文件处理进度。"""
+async def upload_progress_sse(notebook_id: str):
+    """SSE — 实时推送文件处理进度（从 _progress.json 读取）。"""
+    nb = FileNotebook(notebook_id)
+
     async def _stream():
         while True:
-            status = _upload_status.get(notebook_id, {})
-            yield f"data: {json.dumps(status, ensure_ascii=False)}\n\n"
+            progress = _load_progress(nb)
+            yield f"data: {json.dumps(progress, ensure_ascii=False)}\n\n"
 
-            # 检查是否全部完成
-            overall = status.get("__overall__", {})
-            if overall.get("status") == "done":
+            overall = progress.get("__overall__", {})
+            if overall.get("status") in ("done", "error"):
                 yield f"event: done\ndata: {json.dumps(overall, ensure_ascii=False)}\n\n"
-                # 清理状态
-                _upload_status.pop(notebook_id, None)
-                _upload_queues.pop(notebook_id, None)
                 break
 
-            await asyncio.sleep(0.5)
+            # 所有文件都处理完但没有 overall（无 pending）
+            file_statuses = [v.get("status") for k, v in progress.items() if k != "__overall__"]
+            if file_statuses and all(s in ("done", "error") for s in file_statuses):
+                yield f"event: done\ndata: {json.dumps({'status': 'done', 'message': '全部完成'}, ensure_ascii=False)}\n\n"
+                break
+
+            await asyncio.sleep(1)
 
     return StreamingResponse(_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/upload/{notebook_id}/files")
+async def list_upload_files(notebook_id: str):
+    """返回文件列表 + 各文件处理状态 + 已处理文本（如有）。"""
+    nb = FileNotebook(notebook_id)
+    if not nb.root.exists():
+        raise HTTPException(404, "笔记本不存在")
+
+    progress = _load_progress(nb)
+    files = []
+    for f in sorted(nb.upload_dir.iterdir()):
+        if f.is_file() and not f.name.startswith("_") and not f.name.startswith("."):
+            stem = Path(f.name).stem
+            info = progress.get(f.name, {})
+
+            # 尝试读取已处理的文本
+            clean_path = nb.text_dir / f"{stem}.md"
+            raw_path = nb.text_dir / f"{stem}.raw.md"
+            clean_text = clean_path.read_text(encoding="utf-8") if clean_path.exists() else None
+            raw_text = raw_path.read_text(encoding="utf-8") if raw_path.exists() else None
+
+            files.append({
+                "filename": f.name,
+                "size": f.stat().st_size,
+                "status": info.get("status", "pending"),
+                "message": info.get("message", ""),
+                "chars": info.get("chars", 0),
+                "clean_text": clean_text,
+                "raw_text": raw_text,
+            })
+
+    return {"notebook_id": notebook_id, "files": files, "total": len(files)}
+
+
+@router.post("/reprocess/{notebook_id}/{filename}")
+async def reprocess_file(notebook_id: str, filename: str):
+    """重新处理单个文件。"""
+    nb = FileNotebook(notebook_id)
+    filepath = nb.upload_dir / filename
+    if not filepath.exists():
+        raise HTTPException(404, f"文件不存在: {filename}")
+
+    _set_file_progress(nb, filename, status="pending", message="等待重新处理")
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _process_single_file, nb, filename)
+
+    return {
+        "notebook_id": notebook_id,
+        "filename": filename,
+        "status": result["status"],
+        "chars": result.get("chars", 0),
+        "message": "重新处理完成",
+    }
 
 
 # ══════════════════════════════════════════════
@@ -486,7 +513,6 @@ async def update_settings(notebook_id: str, body: SettingsUpdate):
     nb = FileNotebook(notebook_id)
     meta = nb.load_meta()
     if not meta:
-        from fastapi import HTTPException
         raise HTTPException(404, "笔记本不存在")
 
     if body.book_type is not None:
@@ -514,7 +540,6 @@ async def rechunk_document(nb: NotebookDep, body: RechunkRequest):
     meta = nb.load_meta()
     raw_md = nb.load_clean_text() or nb.load_raw_text()
     if not raw_md:
-        from fastapi import HTTPException
         raise HTTPException(400, "原始文档不存在，请重新上传")
 
     chunk_result = chunk_markdown(raw_md, meta.get("doc_name", "document"), max_chars=body.max_chars, min_chars=body.min_chars)

@@ -2,9 +2,17 @@ import { useState, useRef, useCallback } from 'react';
 
 const FILE_ACCEPT = '.pdf,.txt,.epub,.md,.docx,.doc,.xlsx,.xls,.csv';
 
-export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUpload, onStartProcessing, uploadProgress, onSearch, onSelectChunk, selectedChunk }) {
+const STATUS_ICON = {
+  pending: '⏳', extracting: '📄', cleaning: '🔄', done: '✅', error: '❌',
+};
+
+export default function SourcePanel({
+  meta, chunks, loading, onUpload, onBatchUpload, onReprocess,
+  uploadProgress, uploadFiles, onSearch, onSelectChunk, selectedChunk,
+}) {
   const fileRef = useRef();
   const [viewingChunk, setViewingChunk] = useState(null);
+  const [viewingFile, setViewingFile] = useState(null);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -23,7 +31,7 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
     } else if (files[0]) {
       onUpload(files[0]);
     }
-    e.target.value = ''; // 允许重复选同一文件
+    e.target.value = '';
   }, [onUpload, onBatchUpload]);
 
   const handleChunkClick = (chunk) => {
@@ -31,9 +39,61 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
     onSelectChunk?.(chunk.index);
   };
 
-  const handleBack = () => setViewingChunk(null);
+  const handleBack = () => { setViewingChunk(null); setViewingFile(null); };
 
-  // ── 详情视图 ──
+  // ── 文件详情视图（查看处理后的文本 + 重新处理按钮） ──
+  if (viewingFile) {
+    return (
+      <aside className="panel-left">
+        <div className="panel-header">
+          <button className="btn-icon" onClick={handleBack} title="返回列表">←</button>
+          <span className="panel-title" style={{ flex: 1 }}>
+            {viewingFile.filename}
+          </span>
+          <span className={`file-status-badge ${viewingFile.status}`}>
+            {STATUS_ICON[viewingFile.status] || '❓'} {viewingFile.status}
+          </span>
+        </div>
+
+        <div className="file-detail">
+          {viewingFile.chars > 0 && (
+            <div className="file-detail-meta">
+              <span className="chunk-detail-tag">{viewingFile.chars} 字符</span>
+              <span className="chunk-detail-tag">{(viewingFile.size / 1024).toFixed(1)} KB</span>
+            </div>
+          )}
+
+          {/* 处理后的文本 */}
+          {viewingFile.clean_text ? (
+            <div className="file-detail-text">
+              <div className="file-detail-label">处理后文本：</div>
+              <pre className="file-text-content">{viewingFile.clean_text}</pre>
+            </div>
+          ) : viewingFile.raw_text ? (
+            <div className="file-detail-text">
+              <div className="file-detail-label">原始文本：</div>
+              <pre className="file-text-content">{viewingFile.raw_text}</pre>
+            </div>
+          ) : (
+            <div className="file-detail-empty">暂无处理结果</div>
+          )}
+
+          {/* 重新处理按钮 */}
+          <div className="file-detail-actions">
+            <button
+              className="btn-reprocess"
+              onClick={() => onReprocess?.(viewingFile.filename)}
+              disabled={loading?.upload}
+            >
+              {loading?.upload ? '处理中…' : '🔄 重新处理'}
+            </button>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  // ── Chunk 详情视图 ──
   if (viewingChunk) {
     return (
       <aside className="panel-left">
@@ -73,34 +133,42 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
       <input ref={fileRef} type="file" accept={FILE_ACCEPT} multiple style={{ display: 'none' }}
         onChange={handleFileChange} />
 
-      {/* 上传进度 */}
+      {/* 上传进度（SSE 实时） */}
       {uploadProgress && Object.keys(uploadProgress).length > 0 && (
         <div className="upload-progress-list">
-          {Object.entries(uploadProgress).filter(([k]) => k !== '__overall__').map(([filename, info]) => (
+          {Object.entries(uploadProgress).filter(([k]) => !k.startsWith('_')).map(([filename, info]) => (
             <div key={filename} className={`upload-progress-item ${info.status}`}>
-              <span className="upload-progress-icon">
-                {info.status === 'done' ? '✅' : info.status === 'skipped' ? '⏭' :
-                 info.status === 'queued' ? '⏳' : '⚙️'}
-              </span>
+              <span className="upload-progress-icon">{STATUS_ICON[info.status] || '❓'}</span>
               <span className="upload-progress-name">{filename}</span>
               <span className="upload-progress-status">{info.message}</span>
             </div>
           ))}
-          {uploadProgress?.__overall__?.status === 'done' && (
-            <div className="upload-progress-summary">
-              ✅ {uploadProgress.__overall__.total_files} 个文件处理完成
-              · {uploadProgress.__overall__.filtered_chunks} 个有效分块
-            </div>
-          )}
         </div>
       )}
 
-      {/* 开始处理按钮 — 上传完成但未处理时显示 */}
-      {uploadProgress?.__upload__?.saved?.length > 0 && !uploadProgress?.__overall__ && !loading?.upload && (
-        <div style={{ margin: '0 16px 12px' }}>
-          <button className="btn-process" onClick={onStartProcessing}>
-            ▶ 开始处理 ({uploadProgress.__upload__.saved.length} 个文件)
-          </button>
+      {loading?.upload && (
+        <div className="loading-text"><div className="spinner" /><span>正在处理文档…</span></div>
+      )}
+
+      {/* 已上传文件列表（点击查看详情） */}
+      {uploadFiles?.length > 0 && (
+        <div className="source-list">
+          <div className="chunk-header-row">
+            <span className="chunk-count">文件 ({uploadFiles.length})</span>
+          </div>
+          {uploadFiles.map(f => (
+            <div key={f.filename} className="source-file-item" onClick={() => setViewingFile(f)}
+              style={{ cursor: 'pointer' }}>
+              <span className="source-file-icon">{STATUS_ICON[f.status] || '📄'}</span>
+              <div className="source-file-info">
+                <div className="source-file-name">{f.filename}</div>
+                <div className="source-file-meta">
+                  {f.status === 'done' ? `${f.chars} 字符` : f.message || f.status}
+                  {' · '}{(f.size / 1024).toFixed(1)} KB
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -114,31 +182,12 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
         }} />
       </div>
 
-      {loading?.upload && (
-        <div className="loading-text"><div className="spinner" /><span>正在分析文档…</span></div>
-      )}
-
-      {/* 来源文件列表 */}
+      {/* 来源文件列表 + chunks */}
       {meta && (
         <div className="source-list">
           <div className="chunk-header-row">
-            <span className="chunk-count">选择所有来源</span>
-            <span className="source-check">✔</span>
+            <span className="chunk-count">分块 ({meta.filtered_chunks || 0})</span>
           </div>
-
-          {/* 主文档 */}
-          <div className="source-file-item active">
-            <span className="source-file-icon">📄</span>
-            <div className="source-file-info">
-              <div className="source-file-name">{meta.doc_name || '未命名文档'}</div>
-              <div className="source-file-meta">
-                {meta.format?.toUpperCase()} · {meta.total_chunks} 个分块 · {(meta.domains || []).join(', ')}
-              </div>
-            </div>
-            <span className="source-check">✔</span>
-          </div>
-
-          {/* 分块列表 */}
           <div className="chunk-list">
             {(chunks?.items || []).map(c => (
               <div key={c.index}
@@ -159,7 +208,7 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUp
       )}
 
       {/* 空状态 */}
-      {!meta && !loading?.upload && (
+      {!meta && !loading?.upload && (!uploadFiles || uploadFiles.length === 0) && (
         <div className="source-empty">
           <div className="source-empty-icon">📁</div>
           <div className="source-empty-text">上传 PDF / Word / Excel / TXT / EPUB 开始分析</div>

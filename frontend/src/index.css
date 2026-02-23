@@ -40,6 +40,20 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .upload-progress-summary{padding:6px 8px;font-size:12px;color:#188038;font-weight:500;border-top:1px solid #e8eaed;margin-top:4px}
 .btn-process{width:100%;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#1a73e8,#1557b0);color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
 .btn-process:hover{background:linear-gradient(135deg,#1557b0,#0d47a1);transform:translateY(-1px);box-shadow:0 2px 8px rgba(26,115,232,.3)}
+.file-detail{padding:12px 16px;overflow-y:auto;flex:1}
+.file-detail-meta{display:flex;gap:8px;margin-bottom:12px}
+.file-detail-label{font-size:12px;color:#5f6368;margin-bottom:6px;font-weight:600}
+.file-detail-text{margin-bottom:12px}
+.file-text-content{font-size:13px;line-height:1.6;color:#1f1f1f;background:#f8f9fa;border-radius:8px;padding:12px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;border:1px solid #e8eaed;margin:0}
+.file-detail-empty{text-align:center;color:#9aa0a6;padding:40px 0;font-size:14px}
+.file-detail-actions{padding-top:12px;border-top:1px solid #e8eaed}
+.btn-reprocess{width:100%;padding:10px;border:1px solid #dadce0;border-radius:8px;background:#fff;color:#1a73e8;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
+.btn-reprocess:hover{background:#e8f0fe;border-color:#1a73e8}
+.btn-reprocess:disabled{opacity:.5;cursor:not-allowed}
+.file-status-badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#f1f3f4;color:#5f6368;white-space:nowrap}
+.file-status-badge.done{background:#e6f4ea;color:#188038}
+.file-status-badge.error{background:#fce8e6;color:#c5221f}
+.file-status-badge.extracting,.file-status-badge.cleaning{background:#e8f0fe;color:#1a73e8}
 .upload-icon{font-size:18px}
 .upload-text{color:#1f1f1f;font-size:13px}
 

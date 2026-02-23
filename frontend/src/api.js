@@ -19,8 +19,14 @@ export async function uploadFiles(files, notebookId) {
   return r.json();
 }
 
-export async function processDocuments(notebookId) {
-  const r = await fetch(`${BASE}/api/process/${notebookId}`, { method: 'POST' });
+export async function getUploadFiles(notebookId) {
+  const r = await fetch(`${BASE}/api/upload/${notebookId}/files`);
+  if (!r.ok) return { files: [], total: 0 };
+  return r.json();
+}
+
+export async function reprocessFile(notebookId, filename) {
+  const r = await fetch(`${BASE}/api/reprocess/${notebookId}/${encodeURIComponent(filename)}`, { method: 'POST' });
   if (!r.ok) throw new Error((await r.json()).detail || '处理失败');
   return r.json();
 }

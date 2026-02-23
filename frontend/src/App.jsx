@@ -93,8 +93,9 @@ export default function App() {
           <SourcePanel
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
             onUpload={handleUpload} onBatchUpload={handleBatchUpload}
-            onStartProcessing={s.startProcessing}
+            onReprocess={s.doReprocess}
             uploadProgress={s.uploadProgress}
+            uploadFiles={s.uploadFiles}
             onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}
           />
         </div>
