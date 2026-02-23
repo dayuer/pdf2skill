@@ -109,6 +109,57 @@ export default function SourcePanel({
         </div>
 
         <div className="file-detail">
+          {/* Office 风格工具栏 — 顶部 */}
+          <div className="file-toolbar">
+            <button
+              className="btn-toolbar"
+              onClick={() => handleReprocess(viewingFile.filename)}
+              disabled={loading?.upload}
+            >
+              🔄 {loading?.upload ? '处理中…' : '重新处理'}
+            </button>
+            <button
+              className="btn-toolbar btn-toolbar-primary"
+              onClick={async () => {
+                setChunking(true);
+                setChunkResult(null);
+                try {
+                  await onChunkFile?.(viewingFile.filename, { setChunkResult, setChunking });
+                } catch (e) {
+                  setChunkResult({ status: 'error', message: e.message });
+                  setChunking(false);
+                }
+              }}
+              disabled={chunking || !viewingFile.clean_text}
+            >
+              ✂️ {chunking ? '分块中…' : '分块'}
+            </button>
+            <div style={{ flex: 1 }} />
+            <button
+              className="btn-toolbar btn-toolbar-danger"
+              onClick={() => handleDelete(viewingFile.filename)}
+            >
+              🗑️ 删除
+            </button>
+          </div>
+
+          {/* 分块进度 */}
+          {chunkResult && (
+            <div className="file-toolbar-progress">
+              <span>{chunkResult.status === 'error'
+                ? `❌ ${chunkResult.message}`
+                : chunkResult.status === 'done'
+                  ? `✅ ${chunkResult.message}`
+                  : `⏳ ${chunkResult.message}`}</span>
+              {chunkResult.chunks > 0 && (
+                <span className="toolbar-progress-detail">
+                  {chunkResult.segments_done}/{chunkResult.segments_total} 段 · {chunkResult.chunks} 片段
+                  {chunkResult.jsonl_path && <> · {chunkResult.jsonl_path}</>}
+                </span>
+              )}
+            </div>
+          )}
+
           {viewingFile.chars > 0 && (
             <div className="file-detail-meta">
               <span className="chunk-detail-tag">{viewingFile.chars} 字符</span>
@@ -129,60 +180,6 @@ export default function SourcePanel({
             </div>
           ) : (
             <div className="file-detail-empty">暂无处理结果</div>
-          )}
-
-          {/* 操作按钮 */}
-          <div className="file-detail-actions">
-            <button
-              className="btn-reprocess"
-              onClick={() => handleReprocess(viewingFile.filename)}
-              disabled={loading?.upload}
-            >
-              {loading?.upload ? '处理中…' : '🔄 重新处理'}
-            </button>
-            <button
-              className="btn-reprocess"
-              style={{ marginLeft: 8, background: '#e8f0fe', color: '#1a73e8', border: '1px solid #c2d9fc' }}
-              onClick={async () => {
-                setChunking(true);
-                setChunkResult(null);
-                try {
-                  await onChunkFile?.(viewingFile.filename, { setChunkResult, setChunking });
-                } catch (e) {
-                  setChunkResult({ status: 'error', message: e.message });
-                  setChunking(false);
-                }
-              }}
-              disabled={chunking || !viewingFile.clean_text}
-            >
-              {chunking ? '分块中…' : '✂️ 分块'}
-            </button>
-            <button
-              className="btn-delete-file"
-              style={{ marginLeft: 8 }}
-              onClick={() => handleDelete(viewingFile.filename)}
-            >
-              🗑️ 删除
-            </button>
-          </div>
-
-          {/* 分块进度 */}
-          {chunkResult && (
-            <div className="file-detail-text" style={{ marginTop: 12 }}>
-              <div className="file-detail-label">
-                {chunkResult.status === 'error'
-                  ? `❌ ${chunkResult.message}`
-                  : chunkResult.status === 'done'
-                    ? `✅ ${chunkResult.message}`
-                    : `⏳ ${chunkResult.message}`}
-              </div>
-              {chunkResult.chunks > 0 && (
-                <div style={{ fontSize: 12, color: '#5f6368', marginTop: 4 }}>
-                  {chunkResult.segments_done}/{chunkResult.segments_total} 段已处理 · 累计 {chunkResult.chunks} 个片段
-                  {chunkResult.jsonl_path && <><br/>输出: {chunkResult.jsonl_path}</>}
-                </div>
-              )}
-            </div>
           )}
         </div>
       </aside>

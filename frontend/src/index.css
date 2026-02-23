@@ -124,6 +124,18 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .source-file-info{flex:1;min-width:0}
 .source-file-name{font-size:13px;font-weight:500;color:#1f1f1f;word-break:break-all}
 .source-file-meta{font-size:11px;color:#80868b;margin-top:2px}
+
+/* ── Office 风格顶部工具栏 ── */
+.file-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;border-radius:0}
+.btn-toolbar{padding:6px 14px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#3c4043;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn-toolbar:hover{background:#e8eaed;border-color:#bdc1c6}
+.btn-toolbar:disabled{opacity:.5;cursor:not-allowed}
+.btn-toolbar-primary{background:#e8f0fe;color:#1a73e8;border-color:#c2d9fc}
+.btn-toolbar-primary:hover{background:#d2e3fc;border-color:#1a73e8}
+.btn-toolbar-danger{background:#fff;color:#c5221f;border-color:#dadce0}
+.btn-toolbar-danger:hover{background:#fce8e6;border-color:#c5221f}
+.file-toolbar-progress{padding:6px 12px;background:#e8f5e9;border-bottom:1px solid #c8e6c9;font-size:12px;color:#2e7d32;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar-progress-detail{color:#5f6368;font-size:11px}
 .source-file-item.error{background:#fef7f6}
 .source-file-item.error:hover{background:#fce8e6}
 .source-file-error-msg{color:#c5221f;font-weight:500}
