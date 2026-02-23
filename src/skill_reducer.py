@@ -26,6 +26,56 @@ class SkillCluster:
 
     skills: list[ValidatedSkill]
     centroid_idx: int = 0  # 该簇中最具代表性的 Skill 索引
+    # 融合状态矩阵：记录合并溯源
+    merge_log: list[str] = field(default_factory=list)
+    # Tag 归一化映射（原始 → 归一化后）
+    tag_map: dict[str, str] = field(default_factory=dict)
+
+
+# ──── Tag 归一化 ────
+
+# 领域同义词库：值 → 标准化标签
+_DOMAIN_SYNONYMS: dict[str, str] = {
+    # 保险领域
+    "保险": "保险", "insurance": "保险", "保障": "保险",
+    "理赔": "保险·理赔", "赔付": "保险·理赔", "claims": "保险·理赔",
+    "核保": "保险·核保", "承保": "保险·核保", "underwriting": "保险·核保",
+    # 法律领域
+    "法律": "法律", "法规": "法律", "legal": "法律", "法务": "法律",
+    "合同": "法律·合同", "contract": "法律·合同", "条款": "法律·合同",
+    # 技术领域
+    "技术": "技术", "technology": "技术", "tech": "技术",
+    "开发": "技术·开发", "编程": "技术·开发", "programming": "技术·开发",
+    "运维": "技术·运维", "devops": "技术·运维", "ops": "技术·运维",
+    # 医学领域
+    "医学": "医学", "medical": "医学", "临床": "医学·临床",
+    "药学": "医学·药学", "pharmacy": "医学·药学",
+    # 金融领域
+    "金融": "金融", "finance": "金融", "财务": "金融",
+    "投资": "金融·投资", "investment": "金融·投资",
+}
+
+
+def normalize_domain(domain: str) -> str:
+    """将 domain 标签归一化为标准形式"""
+    key = domain.lower().strip()
+    return _DOMAIN_SYNONYMS.get(key, domain)
+
+
+def normalize_skills_tags(skills: list[ValidatedSkill]) -> dict[str, str]:
+    """
+    批量归一化所有 Skill 的 domain 标签。
+
+    返回原始 → 归一化的映射表。
+    """
+    tag_map: dict[str, str] = {}
+    for skill in skills:
+        original = skill.domain
+        normalized = normalize_domain(original)
+        if original != normalized:
+            tag_map[original] = normalized
+            skill.domain = normalized
+    return tag_map
 
 
 # ──── 向量化（轻量级，不依赖外部 Embedding 模型） ────
@@ -68,6 +118,7 @@ def _build_vocab(texts: list[str], max_dim: int = 2000) -> dict[str, int]:
 def cluster_skills(
     skills: list[ValidatedSkill],
     threshold: float | None = None,
+    use_vector_store: bool = False,
 ) -> list[SkillCluster]:
     """
     基于余弦相似度的贪心聚类。
@@ -75,6 +126,7 @@ def cluster_skills(
     Args:
         skills: 校验通过的 Skill 列表
         threshold: 相似度阈值（默认使用配置值 0.88）
+        use_vector_store: 使用 Milvus-Lite Embedding 向量化（需 Embedding 配置）
 
     Returns:
         聚类结果列表
@@ -85,13 +137,35 @@ def cluster_skills(
     if threshold is None:
         threshold = config.dedup_similarity_threshold
 
+    # Tag 归一化：先统一 domain 再聚类
+    tag_map = normalize_skills_tags(skills)
+
     # 构建每个 Skill 的文本表示（trigger + body 前 500 字）
     texts = [f"{s.trigger} {s.body[:500]}" for s in skills]
-    vocab = _build_vocab(texts)
-    dim = len(vocab) if vocab else 1
 
-    # 向量化
-    vectors = np.array([_text_to_vector(t, vocab, dim) for t in texts])
+    # 向量化策略：优先 Embedding，降级为 TF
+    vectors = None
+    if use_vector_store and config.embedding.is_configured:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=config.embedding.api_key,
+                base_url=config.embedding.base_url,
+            )
+            resp = client.embeddings.create(input=texts, model=config.embedding.model)
+            vectors = np.array([d.embedding for d in resp.data], dtype=np.float32)
+            import logging
+            logging.getLogger(__name__).info(
+                "✅ 聚类使用 Embedding 向量化（%d 维）", vectors.shape[1]
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Embedding 降级为 TF 向量: {e}")
+
+    if vectors is None:
+        vocab = _build_vocab(texts)
+        dim = len(vocab) if vocab else 1
+        vectors = np.array([_text_to_vector(t, vocab, dim) for t in texts])
 
     # 贪心聚类
     used = [False] * len(skills)
@@ -114,7 +188,11 @@ def cluster_skills(
                 cluster_skills_list.append(skills[j])
                 used[j] = True
 
-        clusters.append(SkillCluster(skills=cluster_skills_list))
+        clusters.append(SkillCluster(
+            skills=cluster_skills_list,
+            tag_map=tag_map,
+            merge_log=[f"初始聚类: {len(cluster_skills_list)} 个 Skill"],
+        ))
 
     return clusters
 
@@ -187,6 +265,13 @@ async def reduce_cluster(
 
     # 合并后的 Skill 继承第一个 Skill 的元信息
     first = cluster.skills[0]
+
+    # 记录融合状态
+    cluster.merge_log.append(
+        f"R1 合并: {len(cluster.skills)} 个 Skill → 1 | "
+        f"来源 chunks: {[s.source_chunk_index for s in cluster.skills]}"
+    )
+
     return ValidatedSkill(
         name=first.name,
         trigger=first.trigger,

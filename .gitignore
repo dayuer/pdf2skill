@@ -32,3 +32,7 @@ logs/*.jsonl
 # ── Agent 配置（本地专属）──────────────────────
 AGENTS.md
 GEMINI.md
+
+# ── Frontend ────────────────────────────────────
+frontend/node_modules/
+static/dist/

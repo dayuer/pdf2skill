@@ -65,13 +65,13 @@ def _generate_mapping(
     skills: list[ValidatedSkill],
     book_name: str,
 ) -> str:
-    """生成 mapping.md 多维路由表"""
+    """生成 mapping.md 多维路由表（含依赖图 + 层次路由）"""
     # 按类型分组
     by_type: dict[str, list[ValidatedSkill]] = defaultdict(list)
     for s in skills:
         by_type[s.sku_type.value].append(s)
 
-    # 按领域分组
+    # 按领域分组（支持 A·B 层次结构）
     by_domain: dict[str, list[ValidatedSkill]] = defaultdict(list)
     for s in skills:
         by_domain[s.domain].append(s)
@@ -111,16 +111,50 @@ def _generate_mapping(
             lines.append(f"| {link} | {trigger} | {s.domain} | {s.confidence:.0%} |")
         lines.append("")
 
-    # 按领域索引
+    # 按领域层次索引
     lines.append("---")
     lines.append("")
     lines.append("## 🏷️ 按领域索引")
     lines.append("")
+
+    # 构建层次结构：一级域 → 二级域
+    level1: dict[str, list[ValidatedSkill]] = defaultdict(list)
     for domain in sorted(by_domain.keys()):
-        domain_skills = by_domain[domain]
-        lines.append(f"### {domain} ({len(domain_skills)})")
-        for s in domain_skills:
-            lines.append(f"- [{s.name}](./skus/{s.sku_type.value}/{s.sku_id}/header.md) `{s.sku_type.value}`")
+        top = domain.split("·")[0] if "·" in domain else domain
+        level1[top].extend(by_domain[domain])
+
+    for l1_domain in sorted(level1.keys()):
+        all_in_domain = level1[l1_domain]
+        lines.append(f"### {l1_domain} ({len(all_in_domain)})")
+        # 按子域分组
+        sub_groups: dict[str, list[ValidatedSkill]] = defaultdict(list)
+        for s in all_in_domain:
+            sub = s.domain.split("·", 1)[1] if "·" in s.domain else ""
+            sub_groups[sub].append(s)
+        for sub, sub_skills in sorted(sub_groups.items()):
+            if sub:
+                lines.append(f"  **{sub}**:")
+            for s in sub_skills:
+                lines.append(f"- [{s.name}](./skus/{s.sku_type.value}/{s.sku_id}/header.md) `{s.sku_type.value}`")
+        lines.append("")
+
+    # 依赖图
+    deps_exist = any(s.prerequisites for s in skills)
+    if deps_exist:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 🔗 前置条件依赖图")
+        lines.append("")
+        lines.append("```mermaid")
+        lines.append("graph TD")
+        for s in skills:
+            node_id = s.sku_id.replace("-", "_")
+            lines.append(f"    {node_id}[\"{s.name}\"]")
+            for prereq in s.prerequisites:
+                # 尝试匹配已有 SKU
+                prereq_id = prereq.replace(" ", "_").replace("-", "_").lower()
+                lines.append(f"    {prereq_id} --> {node_id}")
+        lines.append("```")
         lines.append("")
 
     return "\n".join(lines)

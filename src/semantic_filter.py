@@ -91,32 +91,134 @@ def _score_value(text: str) -> int:
     """
     通道 A：评估文本的独立操作价值（1-5 分）。
 
-    纯本地规则，不消耗 LLM Token。
+    使用三维语义密度综合评分（纯正则，零外部依赖）：
+    - logic_density: 逻辑连接词和因果推理频率
+    - entity_density: 命名实体、数值、公式、单位密度
+    - struct_density: 列表、表格、代码块等结构化元素占比
     """
+    d_logic = _calc_logic_density(text)
+    d_entity = _calc_entity_density(text)
+    d_struct = _calc_struct_density(text)
+
+    # 加权综合（逻辑 0.4 + 实体 0.3 + 结构 0.3）
+    composite = d_logic * 0.4 + d_entity * 0.3 + d_struct * 0.3
+
+    # 低价值信号减分
     text_lower = text.lower()
-    high_hits = sum(1 for p in _HIGH_VALUE_PATTERNS if p in text_lower)
     low_hits = sum(1 for p in _LOW_VALUE_PATTERNS if p in text_lower)
+    composite -= low_hits * 0.08
 
-    # 代码块数量加分
-    code_blocks = text.count("```")
-
-    # 编号列表加分（操作步骤信号）
-    import re
-    numbered_steps = len(re.findall(r"^\s*\d+\.\s", text, re.MULTILINE))
-
-    raw_score = high_hits * 2 + code_blocks * 3 + numbered_steps * 2 - low_hits * 3
-
-    # 归一化到 1-5
-    if raw_score >= 15:
+    # 映射到 1-5
+    if composite >= 0.35:
         return 5
-    elif raw_score >= 10:
+    elif composite >= 0.22:
         return 4
-    elif raw_score >= 5:
+    elif composite >= 0.12:
         return 3
-    elif raw_score >= 1:
+    elif composite >= 0.05:
         return 2
     else:
         return 1
+
+
+# ──── 三维语义密度 ────
+
+import re as _re
+
+# 逻辑连接词（中英文）
+_LOGIC_CONNECTORS = [
+    "因为", "所以", "导致", "如果", "则", "否则", "当", "那么",
+    "然而", "但是", "因此", "虽然", "尽管", "由于", "基于",
+    "前提", "假设", "推论", "结论", "证明", "反之",
+    "because", "therefore", "if", "then", "else", "however",
+    "although", "since", "thus", "hence", "implies", "given that",
+]
+
+# 单位/量词模式
+_UNIT_RE = _re.compile(
+    r"\d+\s*(?:KB|MB|GB|TB|ms|秒|分钟|小时|天|%|元|万|亿|次|个|条|"
+    r"px|em|rem|kg|km|cm|mm|℃|°C|rpm|Hz|kHz|MHz|GHz|Mbps|Gbps)"
+)
+# 数值模式
+_NUMBER_RE = _re.compile(r"(?<!\w)\d+(?:\.\d+)?(?!\w)")
+# 公式/数学符号
+_FORMULA_RE = _re.compile(r"[=≈≤≥±∑∏∫√∞αβγδε]|\\frac|\\sum|\\int|\$\$.+?\$\$")
+
+
+def _calc_logic_density(text: str) -> float:
+    """
+    逻辑密度：逻辑连接词频率 + 条件/因果句式密度。
+    返回 0.0 ~ 1.0。
+    """
+    text_lower = text.lower()
+    word_count = max(len(text.split()), 1)
+
+    # 逻辑连接词命中
+    logic_hits = sum(1 for c in _LOGIC_CONNECTORS if c in text_lower)
+    # 条件句式（if-then, 如果-则）
+    condition_patterns = len(_re.findall(
+        r"(?:如果|若|当|假设|假如).{2,40}(?:则|就|那么|应该|需要)",
+        text,
+    ))
+    # 因果句式
+    causal_patterns = len(_re.findall(
+        r"(?:因为|由于|因此|导致|引起|造成|使得|so that|due to|leads to)",
+        text_lower,
+    ))
+
+    raw = (logic_hits * 2 + condition_patterns * 5 + causal_patterns * 4) / word_count
+    return min(raw, 1.0)
+
+
+def _calc_entity_density(text: str) -> float:
+    """
+    实体密度：命名实体（大写词/中文专有名词）+ 数值/公式/单位。
+    返回 0.0 ~ 1.0。
+    """
+    char_count = max(len(text), 1)
+
+    # 数值
+    numbers = len(_NUMBER_RE.findall(text))
+    # 单位
+    units = len(_UNIT_RE.findall(text))
+    # 公式/数学符号
+    formulas = len(_FORMULA_RE.findall(text))
+    # 代码标识符（驼峰/下划线命名）
+    identifiers = len(_re.findall(r"[a-zA-Z_]\w*(?:\.\w+)+|[a-z]+[A-Z]\w+|[A-Z]{2,}\w*", text))
+    # 括号标注（术语定义信号）
+    parenthetical = len(_re.findall(r"（[^）]{2,20}）|\([^)]{2,20}\)", text))
+
+    raw = (numbers * 2 + units * 3 + formulas * 5 + identifiers * 2 + parenthetical * 3) / (char_count / 10)
+    return min(raw, 1.0)
+
+
+def _calc_struct_density(text: str) -> float:
+    """
+    结构密度：列表/表格/代码块/标题等结构化元素占比。
+    返回 0.0 ~ 1.0。
+    """
+    lines = text.split("\n")
+    total_lines = max(len(lines), 1)
+
+    struct_lines = 0
+    for line in lines:
+        stripped = line.strip()
+        if _re.match(r"^\d+\.\s", stripped):       # 编号列表
+            struct_lines += 1
+        elif stripped.startswith(("- ", "* ", "+ ")):  # 无序列表
+            struct_lines += 1
+        elif "|" in stripped and stripped.count("|") >= 2:  # 表格行
+            struct_lines += 1
+        elif stripped.startswith("```"):               # 代码块边界
+            struct_lines += 1
+        elif stripped.startswith("#"):                  # 标题
+            struct_lines += 1
+
+    # 代码块整体面积
+    code_blocks = text.count("```") // 2
+    code_bonus = code_blocks * 0.08
+
+    return min(struct_lines / total_lines + code_bonus, 1.0)
 
 
 def _has_anchor(text: str) -> bool:

@@ -38,8 +38,25 @@ from .skill_validator import SkillValidator, ValidatedSkill, RawSkill
 from .skill_reducer import cluster_skills, reduce_all_clusters
 from .skill_packager import package_skills
 from .session_store import FileSession, list_sessions as list_disk_sessions
+from .skill_registry import SkillRegistry
+from .skill_graph import SkillGraphBuilder
+from .vector_store import SkillVectorStore
+from .callbacks import StatusCallback, EventType, create_logging_callback
+
+# ── 全局单例 ──
+_skill_registry = SkillRegistry()
+_vector_store = SkillVectorStore()
 
 app = FastAPI(title="pdf2skill", version="0.3")
+
+# 静态文件（React 构建产物）
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static" / "dist"
+_STATIC_FALLBACK = Path(__file__).resolve().parent.parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+else:
+    # Fallback：开发模式下使用旧版 static
+    app.mount("/static", StaticFiles(directory=str(_STATIC_FALLBACK)), name="static")
 
 # 上传目录
 _UPLOAD_DIR = Path("uploads")
@@ -507,9 +524,10 @@ async def execute_full(request: Request, session_id: str):
     """
     阶段三：SSE 全量执行（S/L 断点续传）。
 
-    自动检测已处理的 chunk，跳过它们，从断点继续。
-    每批完成后立即写盘 + 更新 progress_index.json。
-    断开连接 → 自动存档；再次调用 → 自动读档继续。
+    基于 StatusCallback + asyncio.Queue 事件驱动架构：
+    - 管线逻辑通过 callback.emit() 推送事件
+    - SSE generator 从 Queue 消费，yield 给前端
+    - 保持 phase/progress/complete 兼容，新增 batch_start/skill_validated/validation
     """
     fs = FileSession(session_id)
     meta = fs.load_meta()
@@ -517,42 +535,59 @@ async def execute_full(request: Request, session_id: str):
         return JSONResponse({"error": "会话不存在"}, status_code=404)
 
     async def event_generator():
-        schema = _get_schema(session_id, fs)
-        prompt_hint = fs.get_active_prompt_hint()
-        doc_name = meta["doc_name"]
-        total = fs.chunk_count()
-        skill_idx = fs.skill_count()
+        # ── 事件队列 + StatusCallback ──
+        event_queue: asyncio.Queue = asyncio.Queue()
+        callback = StatusCallback()
+        callback.add_callback(create_logging_callback("execute"))
 
-        # ── S/L：检测断点 ──
-        pending = fs.get_pending_chunk_indices(total)
-        done_count = total - len(pending)
+        # SSE 回调：将事件转为 SSE 字典放入队列
+        async def sse_callback(event_type: EventType, data: dict) -> None:
+            sse_event_map = {
+                EventType.PHASE_START: "phase",
+                EventType.PHASE_END: "phase",
+                EventType.CHUNK_PROGRESS: "progress",
+                EventType.BATCH_COMPLETE: "batch_start",
+                EventType.SKILL_VALIDATED: "skill_validated",
+                EventType.SKILL_MERGED: "validation",
+                EventType.INFO: "complete",
+                EventType.ERROR: "error",
+            }
+            sse_name = sse_event_map.get(event_type, event_type.value)
+            await event_queue.put({
+                "event": sse_name,
+                "data": json.dumps(data, ensure_ascii=False),
+            })
 
-        if done_count > 0:
-            yield {
-                "event": "phase",
-                "data": json.dumps({
+        callback.add_callback(sse_callback)
+
+        # ── 管线任务 ──
+        async def pipeline_task():
+            schema = _get_schema(session_id, fs)
+            prompt_hint = fs.get_active_prompt_hint()
+            total = fs.chunk_count()
+            skill_idx = fs.skill_count()
+
+            # S/L：检测断点
+            pending = fs.get_pending_chunk_indices(total)
+            done_count = total - len(pending)
+
+            if done_count > 0:
+                await callback.emit(EventType.PHASE_START, {
                     "phase": "resume",
                     "message": f"📂 读档：已完成 {done_count}/{total}，从断点继续剩余 {len(pending)} 块",
                     "total": total,
                     "done": done_count,
-                }),
-            }
-        else:
-            yield {
-                "event": "phase",
-                "data": json.dumps({
+                })
+            else:
+                await callback.emit(EventType.PHASE_START, {
                     "phase": "extraction",
                     "message": f"开始全量提取：{total} 个文本块",
                     "total": total,
-                }),
-            }
+                })
 
-        if not pending:
-            # 全部已完成，直接返回结果
-            all_skills_data = fs.load_skills()
-            yield {
-                "event": "complete",
-                "data": json.dumps({
+            if not pending:
+                all_skills_data = fs.load_skills()
+                await callback.emit(EventType.INFO, {
                     "final_skills": len(all_skills_data),
                     "output_dir": f"sessions/{session_id}/skills/",
                     "skills": [
@@ -566,66 +601,82 @@ async def execute_full(request: Request, session_id: str):
                     ],
                     "elapsed_s": 0,
                     "resumed": True,
-                }),
-            }
-            return
-
-        async_client = AsyncDeepSeekClient()
-        raw_count = 0
-        completed = done_count  # 从断点计数
-        t_start = time.monotonic()
-
-        # ── 分批处理 pending chunks ──
-        batch_size = 5
-        for batch_offset in range(0, len(pending), batch_size):
-            if await request.is_disconnected():
-                # 断开 → 自动存档（progress_index 已在上一批写入）
-                fs.save_status(
-                    phase="paused",
-                    completed=completed, total=total,
-                    raw_skills=raw_count, passed=skill_idx,
-                    elapsed_s=time.monotonic() - t_start,
-                )
+                })
                 return
 
-            # 只加载本批需要的 chunk（最小内存）
-            batch_indices = pending[batch_offset:batch_offset + batch_size]
-            batch_chunks = fs.load_chunks_by_indices(batch_indices)
+            async_client = AsyncDeepSeekClient()
+            raw_count = 0
+            completed = done_count
+            t_start = time.monotonic()
 
-            batch_skills = await extract_skills_batch(
-                batch_chunks, schema, client=async_client,
-                prompt_hint=prompt_hint,
-            )
-            raw_count += len(batch_skills)
-            completed += len(batch_chunks)
+            batch_size = 5
+            for batch_offset in range(0, len(pending), batch_size):
+                if await request.is_disconnected():
+                    fs.save_status(
+                        phase="paused",
+                        completed=completed, total=total,
+                        raw_skills=raw_count, passed=skill_idx,
+                        elapsed_s=time.monotonic() - t_start,
+                    )
+                    return
 
-            # 立即校验 + 写盘
-            if batch_skills:
-                validator = SkillValidator()
-                source_map = {c.index: c.content for c in batch_chunks}
-                src_texts = [source_map.get(rs.source_chunk_index) for rs in batch_skills]
-                passed_batch, _ = validator.validate_batch(batch_skills, source_texts=src_texts)
-                for s in passed_batch:
-                    fs.save_skill(s, idx=skill_idx)
-                    skill_idx += 1
+                batch_indices = pending[batch_offset:batch_offset + batch_size]
+                batch_chunks = fs.load_chunks_by_indices(batch_indices)
 
-            # ── S/L 存档：标记本批 chunk 完成 ──
-            fs.mark_chunks_done([c.index for c in batch_chunks])
+                # 新增事件：批次开始
+                await callback.emit(EventType.BATCH_COMPLETE, {
+                    "batch_indices": batch_indices,
+                    "batch_size": len(batch_chunks),
+                    "message": f"📦 开始处理批次 {batch_offset // batch_size + 1}（chunk {batch_indices[0]}-{batch_indices[-1]}）",
+                })
 
-            elapsed = time.monotonic() - t_start
-            pending_left = total - completed
-            eta = (pending_left / (completed - done_count) * elapsed) if completed > done_count else 0
+                batch_skills = await extract_skills_batch(
+                    batch_chunks, schema, client=async_client,
+                    prompt_hint=prompt_hint,
+                )
+                raw_count += len(batch_skills)
+                completed += len(batch_chunks)
 
-            fs.save_status(
-                phase="extracting",
-                completed=completed, total=total,
-                raw_skills=raw_count, passed=skill_idx,
-                elapsed_s=elapsed,
-            )
+                passed_count, failed_count = 0, 0
+                if batch_skills:
+                    validator = SkillValidator()
+                    source_map = {c.index: c.content for c in batch_chunks}
+                    src_texts = [source_map.get(rs.source_chunk_index) for rs in batch_skills]
+                    passed_batch, failed_batch = validator.validate_batch(batch_skills, source_texts=src_texts)
+                    passed_count = len(passed_batch)
+                    failed_count = len(failed_batch)
+                    for s in passed_batch:
+                        fs.save_skill(s, idx=skill_idx)
+                        skill_idx += 1
+                        # 新增事件：单 Skill 校验通过
+                        await callback.emit(EventType.SKILL_VALIDATED, {
+                            "name": s.name,
+                            "domain": s.domain,
+                            "trigger": s.trigger[:80],
+                        })
 
-            yield {
-                "event": "progress",
-                "data": json.dumps({
+                # 新增事件：批次校验统计
+                await callback.emit(EventType.SKILL_MERGED, {
+                    "batch_raw": len(batch_skills),
+                    "batch_passed": passed_count,
+                    "batch_failed": failed_count,
+                    "message": f"✅ 批次完成：{len(batch_skills)} 提取 → {passed_count} 通过 / {failed_count} 失败",
+                })
+
+                fs.mark_chunks_done([c.index for c in batch_chunks])
+
+                elapsed = time.monotonic() - t_start
+                pending_left = total - completed
+                eta = (pending_left / (completed - done_count) * elapsed) if completed > done_count else 0
+
+                fs.save_status(
+                    phase="extracting",
+                    completed=completed, total=total,
+                    raw_skills=raw_count, passed=skill_idx,
+                    elapsed_s=elapsed,
+                )
+
+                await callback.emit(EventType.CHUNK_PROGRESS, {
                     "completed": completed,
                     "total": total,
                     "raw_skills": raw_count,
@@ -636,27 +687,24 @@ async def execute_full(request: Request, session_id: str):
                         {"name": s.raw_text[:100], "source": s.source_context}
                         for s in batch_skills[:3]
                     ],
-                }),
-            }
+                })
 
-        # ── 全部完成 ──
-        elapsed_total = time.monotonic() - t_start
-        fs.save_status(
-            phase="complete",
-            completed=total, total=total,
-            raw_skills=raw_count, passed=skill_idx,
-            final_skills=skill_idx, elapsed_s=elapsed_total,
-        )
+            # 全部完成
+            elapsed_total = time.monotonic() - t_start
+            fs.save_status(
+                phase="complete",
+                completed=total, total=total,
+                raw_skills=raw_count, passed=skill_idx,
+                final_skills=skill_idx, elapsed_s=elapsed_total,
+            )
 
-        all_skills_data = fs.load_skills()
-        # 统计 SKU 分布
-        sku_stats = {}
-        for s in all_skills_data:
-            st = s.get("sku_type", "procedural")
-            sku_stats[st] = sku_stats.get(st, 0) + 1
-        yield {
-            "event": "complete",
-            "data": json.dumps({
+            all_skills_data = fs.load_skills()
+            sku_stats = {}
+            for s in all_skills_data:
+                st = s.get("sku_type", "procedural")
+                sku_stats[st] = sku_stats.get(st, 0) + 1
+
+            await callback.emit(EventType.INFO, {
                 "final_skills": len(all_skills_data),
                 "output_dir": f"sessions/{session_id}/skills/",
                 "sku_stats": sku_stats,
@@ -671,8 +719,29 @@ async def execute_full(request: Request, session_id: str):
                     for s in all_skills_data[:30]
                 ],
                 "elapsed_s": round(elapsed_total, 1),
-            }),
-        }
+            })
+
+        # ── 启动管线任务，从队列消费 SSE 事件 ──
+        task = asyncio.create_task(pipeline_task())
+        sentinel = object()  # 哨兵信号
+
+        def _on_done(_):
+            event_queue.put_nowait(sentinel)
+
+        task.add_done_callback(_on_done)
+
+        while True:
+            item = await event_queue.get()
+            if item is sentinel:
+                break
+            yield item
+
+        # 传播管线异常
+        if task.done() and task.exception():
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": str(task.exception())}),
+            }
 
     return EventSourceResponse(event_generator())
 
@@ -688,6 +757,127 @@ async def api_session_skills(session_id: str):
     """获取会话中已提取的所有 Skill"""
     fs = FileSession(session_id)
     return fs.load_skills()
+
+
+@app.post("/api/session/{session_id}/generate-skills")
+async def api_generate_skills(session_id: str):
+    """
+    生成 Claude Code Skills 标准格式。
+
+    将已提取的 ValidatedSkill 转为 SKILL.md 目录结构，
+    包含 index.md 导航索引和 manifest.json 能力摘要。
+
+    Returns:
+        skills_dir: 生成目录路径
+        total_skills: 技能总数
+        manifest: 完整 manifest.json 内容（机器可读）
+    """
+    from .skill_generator import generate_claude_skills
+    import json as _json
+
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    skills_data = fs.load_skills()
+    if not skills_data:
+        return JSONResponse({"error": "无已提取的技能，请先执行提取"}, status_code=400)
+
+    # 重建 ValidatedSkill 列表
+    from .skill_validator import ValidatedSkill, SKUType, ValidationStatus
+    validated = []
+    for sd in skills_data:
+        try:
+            validated.append(ValidatedSkill(
+                name=sd.get("name", ""),
+                trigger=sd.get("trigger", ""),
+                domain=sd.get("domain", "general"),
+                prerequisites=sd.get("prerequisites", []),
+                source_ref=sd.get("source_ref", ""),
+                confidence=sd.get("confidence", 0.5),
+                body=sd.get("body", ""),
+                raw_text=sd.get("raw_text", ""),
+                sku_type=SKUType(sd.get("sku_type", "procedural")),
+                source_chunk_index=sd.get("source_chunk_index", 0),
+                source_context=sd.get("source_context", ""),
+            ))
+        except Exception:
+            continue
+
+    if not validated:
+        return JSONResponse({"error": "无有效技能数据"}, status_code=400)
+
+    doc_name = meta.get("doc_name", "document")
+    skills_path = generate_claude_skills(validated, doc_name)
+
+    # 读取生成的 manifest
+    manifest_path = skills_path / "manifest.json"
+    manifest = _json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+
+    return {
+        "ok": True,
+        "skills_dir": str(skills_path),
+        "total_skills": len(validated),
+        "manifest": manifest,
+    }
+
+
+@app.get("/api/session/{session_id}/skill/{skill_slug}")
+async def api_get_skill(session_id: str, skill_slug: str):
+    """
+    获取单个 Claude Skill 的完整内容（AI 可直接消费）。
+
+    Returns:
+        slug: 技能标识
+        skill_md: SKILL.md 完整内容（含 YAML frontmatter）
+        reference: 参考资料原文
+    """
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    doc_name = meta.get("doc_name", "document")
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in doc_name)
+    base = Path(config.output_dir) / safe_name / "claude_skills" / skill_slug
+
+    skill_md_path = base / "SKILL.md"
+    ref_path = base / "references" / "source.md"
+
+    if not skill_md_path.exists():
+        return JSONResponse({"error": f"技能 '{skill_slug}' 不存在"}, status_code=404)
+
+    return {
+        "slug": skill_slug,
+        "skill_md": skill_md_path.read_text(encoding="utf-8"),
+        "reference": ref_path.read_text(encoding="utf-8") if ref_path.exists() else "",
+    }
+
+
+@app.get("/api/session/{session_id}/manifest")
+async def api_get_manifest(session_id: str):
+    """
+    获取 Claude Skills manifest.json（AI Agent 用于发现可用技能）。
+
+    返回完整 manifest，包含所有技能的 slug、name、domain、type、trigger。
+    AI Agent 可据此决定调用哪个技能。
+    """
+    import json as _json
+
+    fs = FileSession(session_id)
+    meta = fs.load_meta()
+    if not meta:
+        return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+    doc_name = meta.get("doc_name", "document")
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in doc_name)
+    manifest_path = Path(config.output_dir) / safe_name / "claude_skills" / "manifest.json"
+
+    if not manifest_path.exists():
+        return JSONResponse({"error": "尚未生成 Claude Skills，请先调用 /generate-skills"}, status_code=404)
+
+    return _json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 @app.get("/api/session/{session_id}/state")
@@ -745,11 +935,157 @@ def _get_schema(session_id: str, fs: FileSession) -> SkillSchema:
     return schema
 
 
+# ──── 新增 API：Skills 注册表 / 知识图谱 / 向量检索 ────
+
+
+@app.get("/api/skills/registry")
+async def api_skill_registry(request: Request):
+    """
+    查询 Skill 注册表。
+
+    支持过滤：?domain=保险&q=理赔
+    """
+    params = request.query_params
+    domain = params.get("domain", "")
+    q = params.get("q", "")
+
+    if q:
+        skills = _skill_registry.find_by_trigger(q)
+    elif domain:
+        skills = _skill_registry.find_by_domain(domain)
+    else:
+        skills = _skill_registry.list_all()
+
+    return {
+        "total": len(skills),
+        "skills": [s.to_dict() for s in skills],
+    }
+
+
+@app.post("/api/session/{session_id}/skill-graph")
+async def api_skill_graph(session_id: str):
+    """
+    构建并分析 Skill 关系图谱。
+
+    使用 LLM 抽取 Skill 间关系 → NetworkX 图算法分析 → 返回图谱数据。
+    """
+    fs = FileSession(session_id)
+    skills_data = fs.load_skills()
+    if not skills_data:
+        return JSONResponse({"error": "无已提取的 Skill"}, status_code=400)
+
+    builder = SkillGraphBuilder()
+    builder.build_from_skills(skills_data)
+    analysis = builder.analyze()
+
+    return {
+        "ok": True,
+        "top_skills": analysis.top_skills,
+        "clusters": analysis.clusters,
+        "statistics": analysis.statistics,
+        "mermaid": analysis.mermaid,
+        "graph": analysis.graph_json,
+    }
+
+
+@app.get("/api/skills/search")
+async def api_skill_search(request: Request):
+    """
+    语义检索 Skill（需 Embedding 配置）。
+
+    参数: ?q=查询文本&top_k=5
+    """
+    q = request.query_params.get("q", "")
+    top_k = int(request.query_params.get("top_k", "5"))
+
+    if not q:
+        return JSONResponse({"error": "缺少查询参数 q"}, status_code=400)
+
+    if not _vector_store.is_available:
+        return JSONResponse(
+            {"error": "向量检索不可用：请在 .env 中配置 EMBEDDING_* 参数"},
+            status_code=503,
+        )
+
+    results = _vector_store.search_similar(q, top_k=top_k)
+    return {"query": q, "total": len(results), "results": results}
+
+
+# ──── 工作流引擎 API ────
+
+from .workflow_engine import WorkflowEngine
+
+_workflow_engine = WorkflowEngine()
+
+
+@app.post("/api/workflow/execute")
+async def api_workflow_execute(payload: dict):
+    """执行 JSON 工作流定义"""
+    session_id = payload.get("session_id")
+    workflow_def = payload.get("workflow")
+    if not session_id or not workflow_def:
+        raise HTTPException(400, "需要 session_id 和 workflow")
+
+    fs = FileSession(session_id)
+
+    run = _workflow_engine.parse(workflow_def)
+
+    results = []
+
+    def on_status(node_id, status, data):
+        results.append({"node_id": node_id, "status": status.value, "data": data})
+
+    await _workflow_engine.execute(
+        run,
+        context={"session": fs, "session_id": session_id},
+        on_status=on_status,
+    )
+
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "elapsed_s": run.elapsed_s,
+        "results": results,
+        "summary": _workflow_engine.to_json(run),
+    }
+
+
+@app.post("/api/workflow/save")
+async def api_workflow_save(payload: dict):
+    """保存工作流定义到 session"""
+    session_id = payload.get("session_id")
+    workflow = payload.get("workflow")
+    if not session_id or not workflow:
+        raise HTTPException(400, "需要 session_id 和 workflow")
+
+    fs = FileSession(session_id)
+    import json
+    wf_path = fs._dir / "workflow.json"
+    wf_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2))
+    return {"saved": True, "path": str(wf_path)}
+
+
+@app.get("/api/workflow/load/{session_id}")
+async def api_workflow_load(session_id: str):
+    """加载已保存的工作流定义"""
+    fs = FileSession(session_id)
+    import json
+    wf_path = fs._dir / "workflow.json"
+    if not wf_path.exists():
+        return {"workflow": None}
+    return {"workflow": json.loads(wf_path.read_text())}
+
+
 # ──── 前端页面 ────
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    # 优先服务 React 构建产物
+    react_html = Path(__file__).resolve().parent.parent / "static" / "dist" / "index.html"
+    if react_html.exists():
+        return react_html.read_text(encoding="utf-8")
+    # Fallback 到旧版
     _html_path = Path(__file__).resolve().parent.parent / "static" / "index.html"
     return _html_path.read_text(encoding="utf-8")
 

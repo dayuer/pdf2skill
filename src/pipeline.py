@@ -23,6 +23,8 @@ from .semantic_filter import filter_chunks
 from .schema_generator import SkillSchema, generate_schema
 from .sku_classifier import classify_batch
 from .skill_extractor import extract_skills_batch
+from .skill_generator import generate_claude_skills
+from .glossary_extractor import save_glossary
 from .skill_packager import package_skills
 from .skill_reducer import cluster_skills, reduce_all_clusters
 from .skill_validator import SkillValidator, SKUType, ValidatedSkill
@@ -42,6 +44,8 @@ class PipelineResult:
     failed_skills_count: int = 0
     clusters_count: int = 0
     final_skills_count: int = 0
+    # Claude Skills 输出路径
+    claude_skills_dir: str = ""
     # 时间统计（秒）
     elapsed_seconds: float = 0
     # 阶段耗时
@@ -297,6 +301,27 @@ async def run_pipeline_async(
     result.output_dir = str(out_path)
     print(f"  输出目录：{out_path}")
     timings["打包输出"] = time.monotonic() - t0
+
+    # ── Phase 5：Claude Skills 生成 ──
+    t0 = time.monotonic()
+    print(f"🎯 生成 Claude Skills...")
+    skills_path = generate_claude_skills(
+        final_skills,
+        doc_name,
+        output_dir=output_dir or cfg.output_dir,
+    )
+    result.claude_skills_dir = str(skills_path)
+    print(f"  Claude Skills 目录：{skills_path}")
+    timings["Claude Skills"] = time.monotonic() - t0
+
+    # ── Phase 6：术语表提取 ──
+    t0 = time.monotonic()
+    glossary_path = save_glossary(
+        final_skills, doc_name, output_dir=output_dir or cfg.output_dir
+    )
+    if glossary_path and glossary_path.exists():
+        print(f"📚 术语表：{glossary_path}")
+    timings["术语表"] = time.monotonic() - t0
 
     # ── 完成 ──
     result.elapsed_seconds = time.monotonic() - t_start
