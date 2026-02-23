@@ -1,0 +1,31 @@
+# pdf2skill Python 依赖
+# FastAPI 核心
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+pydantic>=2.0
+pydantic-settings>=2.0
+sse-starlette>=1.0
+
+# LLM
+openai>=1.0
+
+# 文档解析
+pypdf>=3.0
+docx2txt>=0.8
+openpyxl>=3.1
+ebooklib>=0.18
+beautifulsoup4>=4.12
+lxml>=4.9
+
+# 数据处理
+numpy>=1.24
+pandas>=2.0
+networkx>=3.0
+
+# 向量存储
+pymilvus>=2.3
+
+# 工具
+python-dotenv>=1.0
+aiofiles>=23.0
