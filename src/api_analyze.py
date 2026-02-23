@@ -410,6 +410,51 @@ async def list_upload_files(workflow_id: str):
     return {"workflow_id": workflow_id, "files": files, "total": len(files)}
 
 
+@router.delete("/upload/{workflow_id}/{filename}")
+async def delete_upload_file(workflow_id: str, filename: str):
+    """删除单个已上传文件 + 所有关联产物。
+
+    级联清理清单：
+      1. upload/{filename}      — 源文件
+      2. text/{stem}.raw.md     — 原始提取文本
+      3. text/{stem}.md         — LLM 整理后文本
+      4. chunk/{stem}.jsonl     — LLM 语义分块
+      5. _progress.json 中条目  — 处理进度
+      6. file_hashes.json 中条目 — SHA-256 去重记录
+    """
+    nb = FileWorkflow(workflow_id)
+    stem = Path(filename).stem
+
+    # 1. 源文件
+    src = nb.upload_dir / filename
+    if not src.exists():
+        raise HTTPException(404, f"文件不存在: {filename}")
+    src.unlink()
+
+    # 2-3. text 产物
+    for suffix in (f"{stem}.raw.md", f"{stem}.md"):
+        p = nb.text_dir / suffix
+        if p.exists():
+            p.unlink()
+
+    # 4. chunk 产物
+    jsonl = nb.chunk_dir / f"{stem}.jsonl"
+    if jsonl.exists():
+        jsonl.unlink()
+
+    # 5. 进度记录
+    progress = _load_progress(nb)
+    if filename in progress:
+        del progress[filename]
+        _save_progress(nb, progress)
+
+    # 6. hash 记录
+    nb.unregister_file(filename)
+
+    _log.info(f"已删除文件及全部关联产物: {filename} (workflow={workflow_id})")
+    return {"ok": True, "filename": filename, "message": f"已删除 {filename} 及其所有关联文件"}
+
+
 @router.post("/reprocess/{workflow_id}/{filename}")
 async def reprocess_file(workflow_id: str, filename: str):
     """重新处理单个文件。"""

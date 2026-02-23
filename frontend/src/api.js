@@ -22,6 +22,11 @@ export async function reprocessFile(workflowId, filename) {
   return r.json();
 }
 
+export async function deleteFile(workflowId, filename) {
+  const r = await fetch(`${BASE}/api/upload/${workflowId}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error((await r.json()).detail || '删除失败');
+  return r.json();
+}
 export function watchUploadProgress(workflowId, { onProgress, onDone, onError }) {
   const src = new EventSource(`${BASE}/api/upload/progress/${workflowId}`);
   src.onmessage = e => onProgress?.(JSON.parse(e.data));

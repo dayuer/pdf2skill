@@ -106,6 +106,7 @@ export default function App() {
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
             onBatchUpload={handleBatchUpload}
             onReprocess={s.doReprocess}
+            onDeleteFile={s.doDeleteFile}
             onChunkFile={async (filename, { setChunkResult, setChunking }) => {
               await api.chunkFile(s.workflowId, filename);
               api.watchChunkProgress(s.workflowId, filename, {

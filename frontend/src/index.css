@@ -124,6 +124,16 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .source-file-info{flex:1;min-width:0}
 .source-file-name{font-size:13px;font-weight:500;color:#1f1f1f;word-break:break-all}
 .source-file-meta{font-size:11px;color:#80868b;margin-top:2px}
+.source-file-item.error{background:#fef7f6}
+.source-file-item.error:hover{background:#fce8e6}
+.source-file-error-msg{color:#c5221f;font-weight:500}
+.source-file-actions{display:flex;gap:4px;flex-shrink:0;margin-left:auto}
+.btn-file-action{width:28px;height:28px;border:1px solid #dadce0;border-radius:50%;background:#fff;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0}
+.btn-file-action:hover{background:#f1f3f4;border-color:#bdc1c6}
+.btn-file-retry:hover{background:#e8f0fe;border-color:#1a73e8}
+.btn-file-delete:hover{background:#fce8e6;border-color:#c5221f}
+.btn-delete-file{padding:8px 14px;border:1px solid #dadce0;border-radius:8px;background:#fff;color:#c5221f;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.btn-delete-file:hover{background:#fce8e6;border-color:#c5221f}
 .source-check{color:#1a73e8;font-size:14px;font-weight:700;flex-shrink:0}
 .chunk-header-row .source-check{font-size:12px}
 

@@ -36,9 +36,12 @@ export function useWorkflow() {
   const [uploadFiles, setUploadFiles] = useState([]);
   const progressCleanupRef = useRef(null);
 
+  const prevProgressRef = useRef({});
+
   const batchUpload = useCallback(async (files) => {
     setLoading(l => ({ ...l, upload: true }));
     setUploadProgress({});
+    prevProgressRef.current = {};
     try {
       // 若还没有 workflowId，先创建工作流
       let wfId = workflowId;
@@ -54,7 +57,22 @@ export function useWorkflow() {
 
       // 监听 SSE 处理进度
       const cleanup = api.watchUploadProgress(data.workflow_id, {
-        onProgress: (status) => setUploadProgress(status),
+        onProgress: (status) => {
+          setUploadProgress(status);
+          // 检测新完成/失败的文件 → 立即刷新文件列表
+          const prev = prevProgressRef.current;
+          const hasNewDone = Object.entries(status).some(([k, v]) =>
+            !k.startsWith('_') &&
+            (v.status === 'done' || v.status === 'error') &&
+            prev[k]?.status !== v.status
+          );
+          if (hasNewDone) {
+            api.getUploadFiles(data.workflow_id)
+              .then(uf => setUploadFiles(uf.files || []))
+              .catch(() => {});
+          }
+          prevProgressRef.current = { ...status };
+        },
         onDone: async () => {
           setLoading(l => ({ ...l, upload: false }));
           const st = await api.getWorkflowState(data.workflow_id).catch(() => null);
@@ -98,6 +116,20 @@ export function useWorkflow() {
     } finally {
       setLoading(l => ({ ...l, upload: false }));
     }
+  }, [workflowId, loadUploadFiles]);
+
+  // 删除单个文件（级联清理所有关联产物）
+  const doDeleteFile = useCallback(async (filename) => {
+    if (!workflowId) return;
+    await api.deleteFile(workflowId, filename);
+    // 从进度列表中移除
+    setUploadProgress(prev => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete next[filename];
+      return next;
+    });
+    await loadUploadFiles();
   }, [workflowId, loadUploadFiles]);
 
   // 加载 chunks
@@ -206,7 +238,7 @@ export function useWorkflow() {
     tuneResult, setTuneResult, tuneHistory,
     sampleResult, executeState, skills, loading,
     systemPrompt, setSystemPrompt, promptHint, setPromptHint,
-    batchUpload, uploadProgress, uploadFiles, loadUploadFiles, doReprocess,
+    batchUpload, uploadProgress, uploadFiles, loadUploadFiles, doReprocess, doDeleteFile,
     loadChunks, doRechunk, doTune, doSample, doExecute,
     loadSkills, doSaveSettings, reset,
   };

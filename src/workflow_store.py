@@ -169,6 +169,15 @@ class FileWorkflow:
         }
         self._write_json("file_hashes.json", hashes)
 
+    def unregister_file(self, filename: str) -> None:
+        """按文件名移除哈希记录（允许重新上传）"""
+        hashes = self._load_hashes()
+        to_remove = [h for h, info in hashes.items() if info.get("filename") == filename]
+        for h in to_remove:
+            del hashes[h]
+        if to_remove:
+            self._write_json("file_hashes.json", hashes)
+
     def _load_hashes(self) -> dict:
         return self._read_json("file_hashes.json") or {}
 
