@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWorkflow } from './hooks/useWorkflow';
 import HomePage from './components/HomePage';
+import WorkflowGuide from './components/WorkflowGuide';
 import TopBar from './components/TopBar';
 import SourcePanel from './components/SourcePanel';
 import WorkflowPanel from './components/WorkflowPanel';
@@ -83,6 +84,22 @@ export default function App() {
 
   if (page === 'home') {
     return <HomePage onOpen={handleOpen} onNew={handleNew} />;
+  }
+
+  // 新工作流（没有 meta 也没有 uploadFiles）→ 引导页
+  const isNewWorkflow = s.workflowId && !s.meta && (!s.uploadFiles || s.uploadFiles.length === 0);
+
+  if (isNewWorkflow) {
+    return (
+      <>
+        <TopBar meta={s.meta} onReset={s.reset} onBack={handleBack} />
+        <WorkflowGuide
+          workflowName={s.meta?.name}
+          onUploadFiles={handleBatchUpload}
+          loading={s.loading?.upload}
+        />
+      </>
+    );
   }
 
   return (
