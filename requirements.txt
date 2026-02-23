@@ -1,5 +1,5 @@
 # pdf2skill Python 依赖
-# FastAPI 核心
+# ═══ FastAPI 核心 ═══
 fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart>=0.0.6
@@ -7,25 +7,27 @@ pydantic>=2.0
 pydantic-settings>=2.0
 sse-starlette>=1.0
 
-# LLM
+# ═══ LLM ═══
 openai>=1.0
 
-# 文档解析
-pypdf>=3.0
-docx2txt>=0.8
-openpyxl>=3.1
-ebooklib>=0.18
-beautifulsoup4>=4.12
-lxml>=4.9
+# ═══ 文档解析 ═══
+pymupdf>=1.24               # fitz — PDF 解析（首选）
+pypdf>=3.0                  # PDF fallback
+python-docx>=1.0            # Word .docx 解析
+docx2txt>=0.8               # Word 文本提取 fallback
+openpyxl>=3.1               # Excel .xlsx 解析
+ebooklib>=0.18              # EPUB 解析
+beautifulsoup4>=4.12        # HTML 文本提取
+lxml>=4.9                   # XML/HTML 解析
 
-# 数据处理
+# ═══ 数据处理 ═══
 numpy>=1.24
 pandas>=2.0
-networkx>=3.0
+networkx>=3.0               # Skill 知识图谱
 
-# 向量存储
+# ═══ 向量存储 ═══
 pymilvus>=2.3
 
-# 工具
+# ═══ 工具 ═══
 python-dotenv>=1.0
 aiofiles>=23.0
