@@ -229,6 +229,12 @@ async def _auto_process_worker(workflow_id: str) -> None:
 
     prompt_name, _ = _resolve_prompt_type(schema.book_type)
 
+    # 构建全部文件列表
+    files_info = [
+        {"doc_name": r["doc_name"], "format": r["format"], "chars": r.get("chars", 0)}
+        for r in processed
+    ]
+
     nb.save_meta(
         doc_name=primary["doc_name"],
         format=primary["format"],
@@ -240,6 +246,7 @@ async def _auto_process_worker(workflow_id: str) -> None:
         prompt_type=prompt_name,
         core_components=schema.fields.get("core_components", []),
         skill_types=schema.fields.get("skill_types", []),
+        files=files_info,
     )
     nb.save_schema(schema)
     nb.save_chunks(filter_result.kept)

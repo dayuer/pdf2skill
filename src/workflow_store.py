@@ -200,6 +200,7 @@ class FileWorkflow:
         prompt_type: str = "",
         core_components: list[str] | None = None,
         skill_types: list[str] | None = None,
+        files: list[dict] | None = None,
     ) -> None:
         """保存文档元信息"""
         existing = self.load_meta() or {}
@@ -216,7 +217,8 @@ class FileWorkflow:
             "prompt_type": prompt_type,
             "core_components": core_components or [],
             "skill_types": skill_types or [],
-            "created_at": time.time(),
+            "files": files if files is not None else existing.get("files", []),
+            "created_at": existing.get("created_at", time.time()),
         }
         self._write_json("meta.json", data)
         _update_index_entry(self.workflow_id, data)
