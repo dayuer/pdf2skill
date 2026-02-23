@@ -7,7 +7,7 @@ const STATUS_ICON = {
 };
 
 export default function SourcePanel({
-  meta, chunks, loading, onUpload, onBatchUpload, onReprocess,
+  meta, chunks, loading, onBatchUpload, onReprocess,
   uploadProgress, uploadFiles, onSearch, onSelectChunk, selectedChunk,
 }) {
   const fileRef = useRef();
@@ -17,22 +17,14 @@ export default function SourcePanel({
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
-    if (files.length > 1 && onBatchUpload) {
-      onBatchUpload(files);
-    } else if (files[0]) {
-      onUpload(files[0]);
-    }
-  }, [onUpload, onBatchUpload]);
+    if (files.length > 0 && onBatchUpload) onBatchUpload(files);
+  }, [onBatchUpload]);
 
   const handleFileChange = useCallback((e) => {
     const files = Array.from(e.target.files);
-    if (files.length > 1 && onBatchUpload) {
-      onBatchUpload(files);
-    } else if (files[0]) {
-      onUpload(files[0]);
-    }
+    if (files.length > 0 && onBatchUpload) onBatchUpload(files);
     e.target.value = '';
-  }, [onUpload, onBatchUpload]);
+  }, [onBatchUpload]);
 
   const handleChunkClick = (chunk) => {
     setViewingChunk(chunk);

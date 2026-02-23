@@ -2,14 +2,6 @@
 
 const BASE = '';
 
-export async function uploadFile(file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  const r = await fetch(`${BASE}/api/analyze`, { method: 'POST', body: fd });
-  if (!r.ok) throw new Error((await r.json()).detail || '分析失败');
-  return r.json();
-}
-
 export async function uploadFiles(files, workflowId) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);

@@ -70,11 +70,6 @@ export default function App() {
     await api.saveSettings(s.workflowId, { system_prompt: s.systemPrompt });
   }, [s.workflowId, s.systemPrompt]);
 
-  const handleUpload = useCallback(async (file) => {
-    const data = await s.upload(file);
-    if (data) setPage('workspace');
-    return data;
-  }, [s]);
 
   const handleBatchUpload = useCallback(async (files) => {
     const data = await s.batchUpload(files);
@@ -109,7 +104,7 @@ export default function App() {
         <div style={{ width: leftW, minWidth: 180, flexShrink: 0 }}>
           <SourcePanel
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
-            onUpload={handleUpload} onBatchUpload={handleBatchUpload}
+            onBatchUpload={handleBatchUpload}
             onReprocess={s.doReprocess}
             uploadProgress={s.uploadProgress}
             uploadFiles={s.uploadFiles}

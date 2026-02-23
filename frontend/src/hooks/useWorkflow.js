@@ -17,8 +17,6 @@ export function useWorkflow() {
 
   const cleanupRef = useRef(null);
 
-  // 向后兼容：同时暴露 sessionId
-  const sessionId = workflowId;
 
   const persistWorkflow = useCallback((id) => {
     setWorkflowId(id);
@@ -32,18 +30,6 @@ export function useWorkflow() {
     setSampleResult(null); setExecuteState(null); setSkills([]);
   }, []);
 
-  // 单文件上传（向后兼容）
-  const upload = useCallback(async (file) => {
-    setLoading(l => ({ ...l, upload: true }));
-    try {
-      const data = await api.uploadFile(file);
-      persistWorkflow(data.workflow_id);
-      setMeta(data);
-      if (data.baseline_hint) setPromptHint(data.baseline_hint);
-      if (data.system_prompt) setSystemPrompt(data.system_prompt);
-      return data;
-    } finally { setLoading(l => ({ ...l, upload: false })); }
-  }, [persistWorkflow]);
 
   // 批量上传（自动开始处理）
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -213,7 +199,7 @@ export function useWorkflow() {
     tuneResult, setTuneResult, tuneHistory,
     sampleResult, executeState, skills, loading,
     systemPrompt, setSystemPrompt, promptHint, setPromptHint,
-    upload, batchUpload, uploadProgress, uploadFiles, loadUploadFiles, doReprocess,
+    batchUpload, uploadProgress, uploadFiles, loadUploadFiles, doReprocess,
     loadChunks, doRechunk, doTune, doSample, doExecute,
     loadSkills, doSaveSettings, reset,
   };
