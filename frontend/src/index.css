@@ -122,7 +122,7 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .source-file-item.active{background:#e8f0fe}
 .source-file-icon{font-size:18px;flex-shrink:0}
 .source-file-info{flex:1;min-width:0}
-.source-file-name{font-size:13px;font-weight:500;color:#1f1f1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.source-file-name{font-size:13px;font-weight:500;color:#1f1f1f;word-break:break-all}
 .source-file-meta{font-size:11px;color:#80868b;margin-top:2px}
 .source-check{color:#1a73e8;font-size:14px;font-weight:700;flex-shrink:0}
 .chunk-header-row .source-check{font-size:12px}
