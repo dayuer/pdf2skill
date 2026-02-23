@@ -1,21 +1,36 @@
 import { useState, useRef, useCallback } from 'react';
 
-export default function SourcePanel({ meta, chunks, loading, onUpload, onSearch, onSelectChunk, selectedChunk }) {
+const FILE_ACCEPT = '.pdf,.txt,.epub,.md,.docx,.doc,.xlsx,.xls,.csv';
+
+export default function SourcePanel({ meta, chunks, loading, onUpload, onBatchUpload, uploadProgress, onSearch, onSelectChunk, selectedChunk }) {
   const fileRef = useRef();
   const [viewingChunk, setViewingChunk] = useState(null);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
-    if (e.dataTransfer.files[0]) onUpload(e.dataTransfer.files[0]);
-  }, [onUpload]);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 1 && onBatchUpload) {
+      onBatchUpload(files);
+    } else if (files[0]) {
+      onUpload(files[0]);
+    }
+  }, [onUpload, onBatchUpload]);
 
-  // 点击 chunk → 进入详情视图
+  const handleFileChange = useCallback((e) => {
+    const files = Array.from(e.target.files);
+    if (files.length > 1 && onBatchUpload) {
+      onBatchUpload(files);
+    } else if (files[0]) {
+      onUpload(files[0]);
+    }
+    e.target.value = ''; // 允许重复选同一文件
+  }, [onUpload, onBatchUpload]);
+
   const handleChunkClick = (chunk) => {
     setViewingChunk(chunk);
     onSelectChunk?.(chunk.index);
   };
 
-  // 返回列表
   const handleBack = () => setViewingChunk(null);
 
   // ── 详情视图 ──
@@ -49,14 +64,36 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onSearch,
         <button className="btn-icon" title="管理来源">☰</button>
       </div>
 
-      {/* 添加来源 */}
+      {/* 添加来源（支持多文件） */}
       <div className="upload-zone" onClick={() => fileRef.current?.click()}
         onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
         <span>＋</span>
-        <span>添加来源</span>
+        <span>添加来源（支持多文件）</span>
       </div>
-      <input ref={fileRef} type="file" accept=".pdf,.txt,.epub,.md" style={{ display: 'none' }}
-        onChange={e => e.target.files[0] && onUpload(e.target.files[0])} />
+      <input ref={fileRef} type="file" accept={FILE_ACCEPT} multiple style={{ display: 'none' }}
+        onChange={handleFileChange} />
+
+      {/* 上传进度 */}
+      {uploadProgress && Object.keys(uploadProgress).length > 0 && (
+        <div className="upload-progress-list">
+          {Object.entries(uploadProgress).filter(([k]) => k !== '__overall__').map(([filename, info]) => (
+            <div key={filename} className={`upload-progress-item ${info.status}`}>
+              <span className="upload-progress-icon">
+                {info.status === 'done' ? '✅' : info.status === 'skipped' ? '⏭' :
+                 info.status === 'queued' ? '⏳' : '⚙️'}
+              </span>
+              <span className="upload-progress-name">{filename}</span>
+              <span className="upload-progress-status">{info.message}</span>
+            </div>
+          ))}
+          {uploadProgress.__overall__?.status === 'done' && (
+            <div className="upload-progress-summary">
+              ✅ {uploadProgress.__overall__.total_files} 个文件处理完成
+              · {uploadProgress.__overall__.filtered_chunks} 个有效分块
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 搜索 */}
       <div className="search-box">
@@ -92,7 +129,7 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onSearch,
             <span className="source-check">✔</span>
           </div>
 
-          {/* 分块列表 — 点击进入详情 */}
+          {/* 分块列表 */}
           <div className="chunk-list">
             {(chunks?.items || []).map(c => (
               <div key={c.index}
@@ -116,7 +153,7 @@ export default function SourcePanel({ meta, chunks, loading, onUpload, onSearch,
       {!meta && !loading?.upload && (
         <div className="source-empty">
           <div className="source-empty-icon">📁</div>
-          <div className="source-empty-text">上传 PDF / TXT / EPUB 开始分析</div>
+          <div className="source-empty-text">上传 PDF / Word / Excel / TXT / EPUB 开始分析</div>
         </div>
       )}
     </aside>

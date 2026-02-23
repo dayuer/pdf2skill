@@ -5,8 +5,10 @@ import {
   Handle, Position, Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import NodeDrawer from './NodeDrawer';
+import NodePalette, { CATEGORIES } from './NodePalette';
 
-/* ══════ 管线节点定义（n8n properties 模式）══════ */
+/* ══════ n8n 式管线节点属性定义 ══════ */
 const PIPELINE_DEFS = [
   {
     id: 'load', icon: '📄', label: '文档加载', desc: '解析 PDF/TXT/EPUB',
@@ -93,7 +95,7 @@ function makeDefaultNodes() {
       ...d,
       status: d.auto ? 'done' : 'idle',
       config: Object.fromEntries((d.properties || []).map(p => [p.name, p.default])),
-      expanded: false,
+      outputSummary: null,
     },
   }));
 }
@@ -109,109 +111,76 @@ function makeDefaultEdges() {
   }));
 }
 
-/* ══════ n8n 风格参数渲染器 ══════ */
-function ParamField({ prop, value, onChange }) {
-  if (prop.type === 'code') {
-    return (
-      <div className="nd-field">
-        <label className="nd-label">{prop.displayName}</label>
-        <textarea className="nd-textarea" value={value || ''} rows={4}
-          onChange={e => onChange(prop.name, e.target.value)} />
-      </div>
-    );
-  }
-  if (prop.type === 'options') {
-    return (
-      <div className="nd-field">
-        <label className="nd-label">{prop.displayName}</label>
-        <select className="nd-select" value={value ?? prop.default}
-          onChange={e => onChange(prop.name, e.target.value)}>
-          {prop.options.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
-    );
-  }
-  if (prop.type === 'number') {
-    return (
-      <div className="nd-field">
-        <label className="nd-label">{prop.displayName}</label>
-        <input className="nd-input" type="number" value={value ?? prop.default}
-          onChange={e => onChange(prop.name, parseFloat(e.target.value) || 0)} />
-      </div>
-    );
-  }
-  if (prop.type === 'boolean') {
-    return (
-      <div className="nd-field nd-field-row">
-        <label className="nd-label">{prop.displayName}</label>
-        <input type="checkbox" checked={!!value}
-          onChange={e => onChange(prop.name, e.target.checked)} />
-      </div>
-    );
-  }
-  return (
-    <div className="nd-field">
-      <label className="nd-label">{prop.displayName}</label>
-      <input className="nd-input" type="text" value={value || ''}
-        onChange={e => onChange(prop.name, e.target.value)} />
-    </div>
-  );
-}
-
-/* ══════ 自定义 Pipeline 节点 ══════ */
+/* ══════ 自定义 Pipeline 节点（n8n 风格） ══════ */
 const PipelineNode = memo(function PipelineNode({ id, data, selected }) {
   const statusMap = {
     idle: { cls: 'idle', text: '待执行' },
     running: { cls: 'running', text: '执行中…' },
     done: { cls: 'done', text: '✓ 完成' },
+    success: { cls: 'done', text: '✓ 完成' },
     error: { cls: 'error', text: '✗ 失败' },
+    skipped: { cls: 'idle', text: '跳过' },
   };
   const s = statusMap[data.status] || statusMap.idle;
+  const isPinned = data.pinned;
 
   return (
-    <div className={`rf-node${selected ? ' selected' : ''}${data.status === 'running' ? ' running' : ''}${data.expanded ? ' expanded' : ''}`}>
+    <div className={`rf-node${selected ? ' selected' : ''}${data.status === 'running' ? ' running' : ''}`}>
       <Handle type="target" position={Position.Top} className="rf-handle" />
 
-      {/* 头部 — 始终显示 */}
+      {/* 头部 */}
       <div className="rf-node-header">
         <span className="rf-node-icon">{data.icon}</span>
         <div className="rf-node-info">
-          <div className="rf-node-label">{data.label}</div>
+          <div className="rf-node-label">
+            {data.label}
+            {isPinned && <span className="rf-pinned-badge" title="数据已固定">📌</span>}
+          </div>
           <div className="rf-node-desc">{data.desc}</div>
         </div>
         <span className={`node-status ${s.cls}`}>{s.text}</span>
       </div>
 
-      {/* 展开区域 — n8n 配置面板 */}
-      {data.expanded && (
-        <div className="rf-node-detail" onClick={e => e.stopPropagation()}>
-          <div className="nd-divider" />
-          <div className="nd-section-title">
-            <span>⚙ 参数配置</span>
-            <span className="nd-type-tag">{data.type}</span>
-          </div>
-          {(data.properties || []).map(prop => (
-            <ParamField key={prop.name} prop={prop} value={data.config?.[prop.name]}
-              onChange={(name, val) => {
-                data._onConfigChange?.(id, name, val);
-              }} />
-          ))}
-          {data._onRunNode && (
-            <div className="nd-actions">
-              <button className="btn btn-primary btn-sm" onClick={() => data._onRunNode(id)}>
-                ▶ 执行此节点
-              </button>
-            </div>
-          )}
-        </div>
+      {/* 输出数据摘要标签 — n8n 风格 */}
+      {data.outputSummary && (
+        <div className="rf-node-output-badge">{data.outputSummary}</div>
       )}
 
-      <Handle type="source" position={Position.Bottom} className="rf-handle" />
+      {/* 主输出 Handle */}
+      <Handle type="source" position={Position.Bottom} id="main"
+        className="rf-handle" />
+
+      {/* 错误输出 Handle — 右侧 */}
+      <Handle type="source" position={Position.Right} id="error"
+        className="rf-handle rf-handle-error"
+        style={{ top: '50%' }} />
     </div>
   );
 });
 
 const nodeTypes = { pipeline: PipelineNode };
+
+/* ══════ 右键菜单 ══════ */
+function ContextMenu({ x, y, nodeId, onClose, onAction }) {
+  if (!nodeId) return null;
+  const actions = [
+    { key: 'run', label: '▶ 运行到此节点', icon: '▶' },
+    { key: 'pin', label: '📌 固定数据', icon: '📌' },
+    { key: 'disable', label: '⏸ 禁用/启用', icon: '⏸' },
+    { key: 'delete', label: '🗑 删除', icon: '🗑', danger: true },
+  ];
+  return (
+    <div className="rf-context-menu" style={{ left: x, top: y }}>
+      {actions.map(a => (
+        <button key={a.key}
+          className={`rf-ctx-item${a.danger ? ' danger' : ''}`}
+          onClick={() => { onAction(a.key, nodeId); onClose(); }}>
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /* ══════ 主组件 ══════ */
 export default function WorkflowPanel({
@@ -226,27 +195,27 @@ export default function WorkflowPanel({
   const [edges, setEdges, onEdgesChange] = useEdgesState(makeDefaultEdges());
   const reactFlowWrapper = useRef(null);
 
-  // 配置变更回调（注入到节点 data 中）
+  // NDV 状态
+  const [selectedNode, setSelectedNode] = useState(null);
+  // NodePalette 状态
+  const [showPalette, setShowPalette] = useState(false);
+  // 右键菜单状态
+  const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, nodeId: null });
+  // 节点执行数据（从 SSE 收集）
+  const [nodeOutputs, setNodeOutputs] = useState({});
+
+  // 配置变更回调
   const handleConfigChange = useCallback((nodeId, paramName, value) => {
     setNodes(nds => nds.map(n => {
       if (n.id !== nodeId) return n;
       const newConfig = { ...n.data.config, [paramName]: value };
-      // 同步 prompt 到外部状态
       if (paramName === 'system_prompt' && onSystemPromptChange) onSystemPromptChange(value);
       if (paramName === 'prompt_hint' && onPromptHintChange) onPromptHintChange(value);
       return { ...n, data: { ...n.data, config: newConfig } };
     }));
   }, [setNodes, onSystemPromptChange, onPromptHintChange]);
 
-  // 将回调注入节点 data
-  useEffect(() => {
-    setNodes(nds => nds.map(n => ({
-      ...n,
-      data: { ...n.data, _onConfigChange: handleConfigChange, _onRunNode: onRunNode },
-    })));
-  }, [handleConfigChange, onRunNode, setNodes]);
-
-  // 同步外部 prompt 到节点 config
+  // 同步外部 prompt 到节点
   useEffect(() => {
     setNodes(nds => nds.map(n => {
       if (n.data.promptKey === 'system_prompt' && systemPrompt !== undefined) {
@@ -259,27 +228,72 @@ export default function WorkflowPanel({
     }));
   }, [systemPrompt, promptHint, setNodes]);
 
-  // 同步节点状态
+  // 同步节点状态 + 输出摘要
   useEffect(() => {
     if (meta) {
       setNodes(nds => nds.map(n => {
-        if (n.data.auto) return { ...n, data: { ...n.data, status: 'done' } };
-        if (nodeStatuses[n.id]) return { ...n, data: { ...n.data, status: nodeStatuses[n.id] } };
-        return n;
+        const newData = { ...n.data };
+        if (n.data.auto) newData.status = 'done';
+        if (nodeStatuses[n.id]) {
+          newData.status = nodeStatuses[n.id];
+          if (nodeStatuses[n.id] === 'done' || nodeStatuses[n.id] === 'success') {
+            newData.outputSummary = nodeOutputs[n.id]?.summary || null;
+          }
+        }
+        return { ...n, data: newData };
       }));
     }
     if (executeState?.pct >= 100) {
       setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, status: 'done' } })));
+      // 执行完成 → 连线动画停止
+      setEdges(eds => eds.map(e => ({ ...e, animated: false })));
     }
-  }, [meta, executeState, nodeStatuses, setNodes]);
+  }, [meta, executeState, nodeStatuses, nodeOutputs, setNodes, setEdges]);
 
-  // ★ 双击展开/收起 ★
-  const onNodeDoubleClick = useCallback((_, node) => {
-    setNodes(nds => nds.map(n => {
-      if (n.id !== node.id) return n;
-      return { ...n, data: { ...n.data, expanded: !n.data.expanded } };
-    }));
-  }, [setNodes]);
+  // ★ 单击节点 → 打开 NDV 侧抽屉 ★
+  const onNodeClick = useCallback((_, node) => {
+    setSelectedNode(node);
+    setContextMenu(prev => ({ ...prev, show: false }));
+  }, []);
+
+  // ★ 右键 → 上下文菜单 ★
+  const onNodeContextMenu = useCallback((event, node) => {
+    event.preventDefault();
+    setContextMenu({
+      show: true,
+      x: event.clientX,
+      y: event.clientY,
+      nodeId: node.id,
+    });
+  }, []);
+
+  // 右键菜单操作
+  const handleContextAction = useCallback((action, nodeId) => {
+    switch (action) {
+      case 'run':
+        onRunNode?.(nodeId);
+        break;
+      case 'pin':
+        // TODO: 实现 pinData
+        console.log('Pin data for', nodeId);
+        break;
+      case 'disable':
+        setNodes(nds => nds.map(n =>
+          n.id === nodeId ? { ...n, data: { ...n.data, disabled: !n.data.disabled } } : n
+        ));
+        break;
+      case 'delete':
+        setNodes(nds => nds.filter(n => n.id !== nodeId));
+        setEdges(eds => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
+        break;
+    }
+  }, [onRunNode, setNodes, setEdges]);
+
+  // 点击画布空白 → 关闭菜单
+  const onPaneClick = useCallback(() => {
+    setContextMenu(prev => ({ ...prev, show: false }));
+    setSelectedNode(null);
+  }, []);
 
   // 连线
   const onConnect = useCallback((params) => {
@@ -289,7 +303,30 @@ export default function WorkflowPanel({
     }, eds));
   }, [setEdges]);
 
-  // 导出 JSON DAG
+  // NodePalette 添加节点
+  const handleAddNode = useCallback((def) => {
+    const newId = `${def.id}-${Date.now()}`;
+    const allDefs = CATEGORIES.flatMap(c => c.nodes);
+    const fullDef = PIPELINE_DEFS.find(d => d.id === def.id) || {
+      ...def,
+      properties: [],
+    };
+    setNodes(nds => [...nds, {
+      id: newId,
+      type: 'pipeline',
+      position: { x: 300 + Math.random() * 100, y: 100 + nds.length * 80 },
+      data: {
+        ...fullDef,
+        id: newId,
+        status: 'idle',
+        config: Object.fromEntries((fullDef.properties || []).map(p => [p.name, p.default])),
+        outputSummary: null,
+      },
+    }]);
+    setShowPalette(false);
+  }, [setNodes]);
+
+  // 导出 JSON（n8n connections 格式）
   const exportWorkflow = useCallback(() => {
     const workflow = {
       id: `wf-${Date.now()}`,
@@ -298,10 +335,17 @@ export default function WorkflowPanel({
         id: n.id,
         type: n.data.type,
         label: n.data.label,
+        icon: n.data.icon,
+        desc: n.data.desc,
         position: n.position,
-        config: n.data.config,
+        parameters: n.data.config,
       })),
-      edges: edges.map(e => ({ source: e.source, target: e.target })),
+      connections: edges.map(e => ({
+        source: e.source,
+        target: e.target,
+        sourceOutputType: e.sourceHandle || 'main',
+        targetInputType: e.targetHandle || 'main',
+      })),
     };
     const blob = new Blob([JSON.stringify(workflow, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -310,17 +354,35 @@ export default function WorkflowPanel({
     URL.revokeObjectURL(url);
   }, [nodes, edges, meta]);
 
-  // 执行
+  // 执行工作流 — 连线动画 + SSE
   const handleExecute = useCallback(() => {
+    // 所有节点标记为 idle（auto 除外）
+    setNodes(nds => nds.map(n => ({
+      ...n,
+      data: { ...n.data, status: n.data.auto ? 'done' : 'idle', outputSummary: null },
+    })));
+    // 连线开始动画
+    setEdges(eds => eds.map(e => ({
+      ...e, animated: true,
+      style: { ...e.style, stroke: '#7b61ff' },
+    })));
+
     const workflow = {
-      nodes: nodes.map(n => ({ id: n.id, type: n.data.type, config: n.data.config })),
-      edges: edges.map(e => ({ source: e.source, target: e.target })),
+      nodes: nodes.map(n => ({
+        id: n.id, type: n.data.type,
+        label: n.data.label, icon: n.data.icon,
+        config: n.data.config, parameters: n.data.config,
+      })),
+      connections: edges.map(e => ({
+        source: e.source, target: e.target,
+        sourceOutputType: e.sourceHandle || 'main',
+      })),
     };
     console.log('📋 Workflow JSON:', JSON.stringify(workflow, null, 2));
     onExecuteAll?.();
-  }, [nodes, edges, onExecuteAll]);
+  }, [nodes, edges, onExecuteAll, setNodes, setEdges]);
 
-  // 拖入新节点
+  // 拖放
   const onDragOver = useCallback(e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }, []);
   const onDrop = useCallback(e => {
     e.preventDefault();
@@ -334,12 +396,23 @@ export default function WorkflowPanel({
       type: 'pipeline',
       position: { x: e.clientX - (bounds?.left || 0) - 80, y: e.clientY - (bounds?.top || 0) - 30 },
       data: {
-        ...def, status: 'idle', expanded: false,
+        ...def, status: 'idle', outputSummary: null,
         config: Object.fromEntries((def.properties || []).map(p => [p.name, p.default])),
-        _onConfigChange: handleConfigChange, _onRunNode: onRunNode,
       },
     }]);
-  }, [setNodes, handleConfigChange, onRunNode]);
+  }, [setNodes]);
+
+  // 键盘快捷键
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   if (!meta) {
     return (
@@ -347,7 +420,7 @@ export default function WorkflowPanel({
         <div className="center-placeholder">
           <div className="placeholder-icon">🔄</div>
           <div className="placeholder-title">上传文档启动工作流</div>
-          <div className="placeholder-sub">双击节点编辑参数 · 拖拽节点编排流程</div>
+          <div className="placeholder-sub">单击节点编辑参数 · 右键查看操作 · ⌘K 搜索节点</div>
         </div>
       </main>
     );
@@ -359,7 +432,9 @@ export default function WorkflowPanel({
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeDoubleClick={onNodeDoubleClick}
+        onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onPaneClick={onPaneClick}
         onDragOver={onDragOver} onDrop={onDrop}
         nodeTypes={nodeTypes}
         fitView fitViewOptions={{ padding: 0.3 }}
@@ -370,13 +445,15 @@ export default function WorkflowPanel({
         <Controls position="bottom-left" />
         <MiniMap
           nodeColor={n => {
-            if (n.data?.status === 'done') return '#ceead6';
+            if (n.data?.status === 'done' || n.data?.status === 'success') return '#ceead6';
             if (n.data?.status === 'running') return '#d3e3fd';
             if (n.data?.status === 'error') return '#fce8e6';
             return '#f1f3f4';
           }}
           style={{ background: '#fff', border: '1px solid #e0d8cf' }}
         />
+
+        {/* 顶部工具栏 */}
         <Panel position="top-right">
           <div className="rf-toolbar">
             {executeState && (
@@ -387,6 +464,10 @@ export default function WorkflowPanel({
                 <span style={{ fontSize: 11, color: '#80868b' }}>{executeState.text}</span>
               </div>
             )}
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowPalette(!showPalette)}
+              title="添加节点 (⌘K)">
+              ➕ 节点
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={exportWorkflow} title="导出 JSON">
               📋 导出
             </button>
@@ -396,6 +477,33 @@ export default function WorkflowPanel({
           </div>
         </Panel>
       </ReactFlow>
+
+      {/* NodePalette — 左侧浮层 */}
+      <NodePalette
+        visible={showPalette}
+        onClose={() => setShowPalette(false)}
+        onAddNode={handleAddNode}
+      />
+
+      {/* NDV 侧抽屉 */}
+      <NodeDrawer
+        node={selectedNode}
+        onClose={() => setSelectedNode(null)}
+        onConfigChange={handleConfigChange}
+        onRunNode={onRunNode}
+        inputData={null}
+        outputData={nodeOutputs[selectedNode?.id] || null}
+      />
+
+      {/* 右键菜单 */}
+      {contextMenu.show && (
+        <ContextMenu
+          x={contextMenu.x} y={contextMenu.y}
+          nodeId={contextMenu.nodeId}
+          onClose={() => setContextMenu(prev => ({ ...prev, show: false }))}
+          onAction={handleContextAction}
+        />
+      )}
     </main>
   );
 }

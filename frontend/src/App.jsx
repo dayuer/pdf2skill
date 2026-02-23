@@ -75,6 +75,12 @@ export default function App() {
     return data;
   }, [s]);
 
+  const handleBatchUpload = useCallback(async (files) => {
+    const data = await s.batchUpload(files);
+    if (data) setPage('workspace');
+    return data;
+  }, [s]);
+
   if (page === 'home') {
     return <HomePage onOpen={handleOpen} onNew={handleNew} />;
   }
@@ -86,7 +92,9 @@ export default function App() {
         <div style={{ width: leftW, minWidth: 180, flexShrink: 0 }}>
           <SourcePanel
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
-            onUpload={handleUpload} onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}
+            onUpload={handleUpload} onBatchUpload={handleBatchUpload}
+            uploadProgress={s.uploadProgress}
+            onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}
           />
         </div>
         <Resizer onResize={handleLeftResize} />

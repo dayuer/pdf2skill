@@ -1,42 +1,48 @@
-# NotebookLM 风格 UI 改造 — 开发计划
+# pdf2skill — 开发任务
 
-## 目标
+## ✅ 已完成
 
-将当前双栏布局改造为 Google NotebookLM 风格的三栏布局：
+### NotebookLM 风格 UI 改造
 
-- **左栏「来源」**(250px)：文档上传 + 来源列表
-- **中栏「知识提取」**(自适应)：AI 摘要 + 提取结果 + 对话式输入
-- **右栏「Studio」**(280px)：功能卡片网格 + 已提取技能列表
+- [x] 三栏 flexbox 布局（来源/知识提取/Studio）
+- [x] React 组件化（SourcePanel / StudioPanel / WorkflowPanel）
+- [x] 文件上传 + chunk 浏览 + 调优 + SSE 全量执行
+- [x] 工作流画布（ReactFlow）
+- [x] session 恢复 + 视觉打磨
 
-## 任务清单
+### API 架构重构
 
-### Phase 1: HTML/CSS 结构改造
+- [x] web_ui.py 拆分为 5 个 APIRouter 模块（1673→40 行）
+- [x] session→notebook 全栈统一重命名
+- [x] notebook_store.py 替代 session_store.py
+- [x] 前端 useNotebook hook 替代 useSession
+- [x] 删除 HTML 服务代码（前端由 Vite 独立提供）
 
-- [ ] 重写 `static/index.html` 顶栏（logo + 操作按钮组）
-- [ ] 三栏 flexbox 布局骨架
-- [ ] 左栏：来源面板（上传按钮 + 搜索框 + 文件列表）
-- [ ] 中栏：知识提取主区（摘要卡片 + 推荐操作 chips + 输入栏）
-- [ ] 右栏：Studio 面板（功能卡片网格 + 技能列表）
+### 代码质量优化
 
-### Phase 2: JS 逻辑迁移
+- [x] deps.py: DI 依赖注入（NotebookDep）
+- [x] schemas.py: Pydantic V2 请求模型（6 个）
+- [x] 公共函数抽取（\_validate_batch / \_skill_summary）
+- [x] 兼容别名清理（FileSession / list_sessions）
+- [x] config.py 修复（sessions/ → notebooks/）
 
-- [ ] 文件上传逻辑迁移到左栏
-- [ ] 摘要/Schema 展示迁移到中栏
-- [ ] Chunk 浏览/提取结果迁移到中栏
-- [ ] 功能按钮（提取、抽样、全量）迁移到右栏 Studio 卡片
-- [ ] SSE 全量执行进度展示在中栏
-- [ ] 保持 session 恢复逻辑兼容
+### n8n 工作流引擎复刻
 
-### Phase 3: 视觉打磨
+- [x] workflow_types.py — n8n 类型系统
+- [x] workflow_engine.py — BFS 执行栈 + 多输出分支 + 错误路由 + pinData
+- [x] api_workflow.py — SSE 流式执行 + 同步端点 + pin-data CRUD
+- [x] WorkflowPanel.jsx — NDV 侧抽屉 + NodePalette（⌘K）+ 右键菜单 + 执行动画
+- [x] NodeDrawer.jsx — Params/Input/Output 三标签页
+- [x] NodePalette.jsx — 分类式节点选择面板
 
-- [ ] Studio 卡片颜色方案
-- [ ] 动画和过渡效果
-- [ ] 响应式断点处理
-- [ ] 滚动条和间距微调
+### 笔记本目录合并 + 上传增强
 
-### Phase 4: 验证
+- [x] upload + notebook 合并为统一自包含目录（upload/text/prompt/skills）
+- [x] SHA-256 文件去重（跳过重复上传）
+- [x] LLM 格式整理（"除了错别字什么都别改" + 版式）
+- [x] text 文件以源文件命名（{filename}.raw.md / {filename}.md）
+- [x] 各节点 prompt 自动保存到 prompt/ 子目录
 
-- [ ] 上传→分析→提取流程正常
-- [ ] 抽样验证功能正常
-- [ ] 全量执行 SSE 正常
-- [ ] 页面刷新 session 恢复正常
+## 📋 待定
+
+（无当前待办）

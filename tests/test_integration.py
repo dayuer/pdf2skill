@@ -46,9 +46,7 @@ class TestConfig:
         from src.config import PipelineConfig
         cfg = PipelineConfig(output_dir=str(tmp_path / "out"), log_dir=str(tmp_path / "log"))
         cfg.ensure_filesystem()
-        # 至少 sessions/ 和 uploads/ 应该存在
-        assert Path("sessions").exists()
-        assert Path("uploads").exists()
+        assert Path("notebooks").exists()
 
 
 # ──── Component 2: 事件回调 ────

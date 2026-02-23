@@ -10,6 +10,22 @@ export async function uploadFile(file) {
   return r.json();
 }
 
+export async function uploadFiles(files) {
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  const r = await fetch(`${BASE}/api/upload`, { method: 'POST', body: fd });
+  if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
+  return r.json();
+}
+
+export function watchUploadProgress(notebookId, { onProgress, onDone, onError }) {
+  const src = new EventSource(`${BASE}/api/upload/progress/${notebookId}`);
+  src.onmessage = e => onProgress?.(JSON.parse(e.data));
+  src.addEventListener('done', e => { src.close(); onDone?.(JSON.parse(e.data)); });
+  src.onerror = () => { src.close(); onError?.(); };
+  return () => src.close();
+}
+
 export async function loadChunks(sessionId, q, pageSize = 50) {
   const params = new URLSearchParams({ page_size: pageSize });
   if (q) params.set('q', q);

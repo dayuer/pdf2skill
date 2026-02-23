@@ -35,18 +35,56 @@ export function useNotebook() {
     setSampleResult(null); setExecuteState(null); setSkills([]);
   }, []);
 
-  // 上传
+  // 单文件上传（向后兼容）
   const upload = useCallback(async (file) => {
     setLoading(l => ({ ...l, upload: true }));
     try {
       const data = await api.uploadFile(file);
-      // API 可能返回 session_id 或 notebook_id
       persistNotebook(data.notebook_id || data.session_id);
       setMeta(data);
       if (data.baseline_hint) setPromptHint(data.baseline_hint);
       if (data.system_prompt) setSystemPrompt(data.system_prompt);
       return data;
     } finally { setLoading(l => ({ ...l, upload: false })); }
+  }, [persistNotebook]);
+
+  // 批量上传 + SSE 进度
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const progressCleanupRef = useRef(null);
+
+  const batchUpload = useCallback(async (files) => {
+    setLoading(l => ({ ...l, upload: true }));
+    setUploadProgress({});
+    try {
+      const data = await api.uploadFiles(files);
+      persistNotebook(data.notebook_id);
+
+      // 监听 SSE 进度
+      const cleanup = api.watchUploadProgress(data.notebook_id, {
+        onProgress: (status) => setUploadProgress(status),
+        onDone: async (overall) => {
+          setUploadProgress(prev => ({ ...prev, __overall__: overall }));
+          setLoading(l => ({ ...l, upload: false }));
+          // 加载最终状态
+          const st = await api.getSessionState(data.notebook_id).catch(() => null);
+          if (st?.meta) setMeta(st.meta);
+          const cs = await api.loadChunks(data.notebook_id).catch(() => ({ items: [], total: 0 }));
+          setChunks(cs);
+          const pp = await api.getPromptPreview(data.notebook_id).catch(() => null);
+          if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
+          if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
+        },
+        onError: () => {
+          setLoading(l => ({ ...l, upload: false }));
+          setUploadProgress(prev => ({ ...prev, __overall__: { status: 'error', message: '连接中断' } }));
+        },
+      });
+      progressCleanupRef.current = cleanup;
+      return data;
+    } catch (e) {
+      setLoading(l => ({ ...l, upload: false }));
+      throw e;
+    }
   }, [persistNotebook]);
 
   // 加载 chunks
@@ -153,7 +191,7 @@ export function useNotebook() {
     tuneResult, setTuneResult, tuneHistory,
     sampleResult, executeState, skills, loading,
     systemPrompt, setSystemPrompt, promptHint, setPromptHint,
-    upload, loadChunks, doRechunk, doTune, doSample, doExecute,
+    upload, batchUpload, uploadProgress, loadChunks, doRechunk, doTune, doSample, doExecute,
     loadSkills, doSaveSettings, reset,
   };
 }

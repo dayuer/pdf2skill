@@ -21,8 +21,8 @@ venv/
 # ── 运行时数据（目录保留，内容忽略）───────────
 input/*
 !input/.gitkeep
-uploads/*
-!uploads/.gitkeep
+notebooks/*
+!notebooks/.gitkeep
 output/*
 !output/.gitkeep
 sessions/*
@@ -36,3 +36,4 @@ GEMINI.md
 # ── Frontend ────────────────────────────────────
 frontend/node_modules/
 static/dist/
+uploads/*

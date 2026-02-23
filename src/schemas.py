@@ -33,7 +33,7 @@ class SampleRequest(BaseModel):
 
 
 class WorkflowExecuteRequest(BaseModel):
-    """工作流执行"""
+    """工作流执行 — 支持 n8n 式 connections 和旧版 edges 两种格式"""
     notebook_id: str | None = Field(default=None, alias="session_id")
     workflow: dict
 
@@ -48,3 +48,9 @@ class WorkflowSaveRequest(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class PinDataRequest(BaseModel):
+    """固定节点数据（用于调试）"""
+    node_id: str
+    data: list[dict] = Field(default_factory=list)

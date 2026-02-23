@@ -121,7 +121,6 @@ class PipelineConfig(BaseSettings):
         """启动时自动创建所有必要的目录"""
         dirs = [
             _PROJECT_ROOT / "notebooks",
-            _PROJECT_ROOT / "uploads",
             _PROJECT_ROOT / self.output_dir,
             _PROJECT_ROOT / self.log_dir,
             _PROJECT_ROOT / "data",

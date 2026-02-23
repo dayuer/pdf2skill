@@ -1,5 +1,5 @@
 """
-多格式文档加载器 — 支持 PDF、TXT、EPUB。
+多格式文档加载器 — 支持 PDF、TXT、EPUB、DOCX、Excel。
 
 职责：将不同格式的文档统一转换为 Markdown 文本，交给下游 Chunker。
 
@@ -7,6 +7,8 @@
 - PDF：调用 MinerU (magic-pdf) 进行版面分析和结构化转换
 - TXT：直接读取，按空行分段
 - EPUB：通过 ebooklib 提取 HTML 章节，转为 Markdown
+- DOCX：通过 python-docx 提取段落/表格/标题
+- Excel：通过 openpyxl 将每个 sheet 转为 Markdown 表格
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ class DocFormat(Enum):
     PDF = "pdf"
     TXT = "txt"
     EPUB = "epub"
+    DOCX = "docx"
+    EXCEL = "excel"
 
 
 @dataclass
@@ -54,13 +58,18 @@ def detect_format(filepath: str | Path) -> DocFormat:
         ".pdf": DocFormat.PDF,
         ".txt": DocFormat.TXT,
         ".text": DocFormat.TXT,
-        ".md": DocFormat.TXT,  # Markdown 直接当文本处理
+        ".md": DocFormat.TXT,
         ".markdown": DocFormat.TXT,
         ".epub": DocFormat.EPUB,
+        ".docx": DocFormat.DOCX,
+        ".doc": DocFormat.DOCX,
+        ".xlsx": DocFormat.EXCEL,
+        ".xls": DocFormat.EXCEL,
+        ".csv": DocFormat.EXCEL,
     }
     fmt = mapping.get(suffix)
     if fmt is None:
-        raise ValueError(f"不支持的文件格式：{suffix}（支持：PDF, TXT, EPUB）")
+        raise ValueError(f"不支持的文件格式：{suffix}（支持：PDF, TXT, EPUB, DOCX, Excel）")
     return fmt
 
 
@@ -319,6 +328,197 @@ def load_document(filepath: str | Path) -> LoadResult:
         DocFormat.PDF: _load_pdf,
         DocFormat.TXT: _load_txt,
         DocFormat.EPUB: _load_epub,
+        DocFormat.DOCX: _load_docx,
+        DocFormat.EXCEL: _load_excel,
     }
 
     return loader_map[fmt](path)
+
+
+# ── DOCX 加载器 ──
+
+
+def _load_docx(filepath: Path) -> LoadResult:
+    """加载 Word (.docx) 文档，提取段落/表格/标题转为 Markdown。"""
+    try:
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        raise ImportError("DOCX 支持需要安装 python-docx：pip install python-docx")
+
+    doc = Document(str(filepath))
+    md_parts: list[str] = []
+
+    for element in doc.element.body:
+        tag = element.tag.split("}")[-1]  # 去掉命名空间
+
+        if tag == "p":
+            # 段落
+            from docx.oxml.ns import qn
+            style = element.find(qn("w:pPr"))
+            style_name = ""
+            if style is not None:
+                pstyle = style.find(qn("w:pStyle"))
+                if pstyle is not None:
+                    style_name = pstyle.get(qn("w:val"), "")
+
+            text = element.text or ""
+            # 提取所有 run 的文本
+            runs = element.findall(f".//{qn('w:t')}")
+            if runs:
+                text = "".join(r.text or "" for r in runs)
+
+            if not text.strip():
+                continue
+
+            # 标题样式检测
+            if style_name.startswith("Heading") or style_name.startswith("标题"):
+                # 提取层级数字
+                level = 1
+                for ch in style_name:
+                    if ch.isdigit():
+                        level = int(ch)
+                        break
+                md_parts.append(f"{'#' * level} {text.strip()}")
+            else:
+                md_parts.append(text.strip())
+
+        elif tag == "tbl":
+            # 表格
+            table = _extract_docx_table(element)
+            if table:
+                md_parts.append(table)
+
+    return LoadResult(
+        markdown="\n\n".join(md_parts),
+        doc_name=filepath.stem,
+        format=DocFormat.DOCX,
+        source_path=str(filepath),
+    )
+
+
+def _extract_docx_table(tbl_element) -> str:
+    """将 docx XML 表格元素转为 Markdown 表格。"""
+    from docx.oxml.ns import qn
+
+    rows_data: list[list[str]] = []
+    for tr in tbl_element.findall(qn("w:tr")):
+        cells = []
+        for tc in tr.findall(qn("w:tc")):
+            text_parts = [t.text or "" for t in tc.findall(f".//{qn('w:t')}")] 
+            cells.append(" ".join(text_parts).strip())
+        rows_data.append(cells)
+
+    if not rows_data:
+        return ""
+
+    # 统一列数
+    max_cols = max(len(r) for r in rows_data)
+    for r in rows_data:
+        while len(r) < max_cols:
+            r.append("")
+
+    # 生成 Markdown 表格
+    lines = []
+    lines.append("| " + " | ".join(rows_data[0]) + " |")
+    lines.append("| " + " | ".join("---" for _ in rows_data[0]) + " |")
+    for row in rows_data[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines)
+
+
+# ── Excel 加载器 ──
+
+
+def _load_excel(filepath: Path) -> LoadResult:
+    """加载 Excel (.xlsx/.xls/.csv)，将每个 sheet 转为 Markdown 表格。"""
+    suffix = filepath.suffix.lower()
+
+    if suffix == ".csv":
+        return _load_csv(filepath)
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise ImportError("Excel 支持需要安装 openpyxl：pip install openpyxl")
+
+    wb = load_workbook(str(filepath), read_only=True, data_only=True)
+    md_parts: list[str] = []
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            continue
+
+        md_parts.append(f"## {sheet_name}")
+
+        # 过滤全空行
+        non_empty = [r for r in rows if any(c is not None for c in r)]
+        if not non_empty:
+            continue
+
+        max_cols = max(len(r) for r in non_empty)
+
+        def _cell(val) -> str:
+            if val is None:
+                return ""
+            return str(val).replace("|", "│").replace("\n", " ").strip()
+
+        # 第一行作为表头
+        header = non_empty[0]
+        header_cells = [_cell(c) for c in header] + [""] * (max_cols - len(header))
+        lines = []
+        lines.append("| " + " | ".join(header_cells) + " |")
+        lines.append("| " + " | ".join("---" for _ in header_cells) + " |")
+
+        for row in non_empty[1:]:
+            cells = [_cell(c) for c in row] + [""] * (max_cols - len(row))
+            lines.append("| " + " | ".join(cells) + " |")
+
+        md_parts.append("\n".join(lines))
+
+    wb.close()
+
+    return LoadResult(
+        markdown="\n\n".join(md_parts),
+        doc_name=filepath.stem,
+        format=DocFormat.EXCEL,
+        source_path=str(filepath),
+    )
+
+
+def _load_csv(filepath: Path) -> LoadResult:
+    """加载 CSV 文件转为 Markdown 表格。"""
+    import csv
+
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+
+    if not rows:
+        return LoadResult(
+            markdown="",
+            doc_name=filepath.stem,
+            format=DocFormat.EXCEL,
+            source_path=str(filepath),
+        )
+
+    def _cell(val: str) -> str:
+        return val.replace("|", "│").replace("\n", " ").strip()
+
+    lines = []
+    lines.append("| " + " | ".join(_cell(c) for c in rows[0]) + " |")
+    lines.append("| " + " | ".join("---" for _ in rows[0]) + " |")
+    for row in rows[1:]:
+        # 补齐列数
+        padded = row + [""] * (len(rows[0]) - len(row))
+        lines.append("| " + " | ".join(_cell(c) for c in padded) + " |")
+
+    return LoadResult(
+        markdown="\n".join(lines),
+        doc_name=filepath.stem,
+        format=DocFormat.EXCEL,
+        source_path=str(filepath),
+    )
