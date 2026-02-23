@@ -34,7 +34,7 @@ class SampleRequest(BaseModel):
 
 class WorkflowExecuteRequest(BaseModel):
     """工作流执行 — 支持 n8n 式 connections 和旧版 edges 两种格式"""
-    workflow_id: str | None = Field(default=None, alias="session_id")
+    workflow_id: str | None = Field(default=None)
     workflow: dict
 
     class Config:
@@ -43,7 +43,7 @@ class WorkflowExecuteRequest(BaseModel):
 
 class WorkflowSaveRequest(BaseModel):
     """工作流保存"""
-    workflow_id: str | None = Field(default=None, alias="session_id")
+    workflow_id: str | None = Field(default=None)
     workflow: dict
 
     class Config:

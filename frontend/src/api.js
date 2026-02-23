@@ -30,15 +30,15 @@ export function watchUploadProgress(workflowId, { onProgress, onDone, onError })
   return () => src.close();
 }
 
-export async function loadChunks(sessionId, q, pageSize = 50) {
+export async function loadChunks(workflowId, q, pageSize = 50) {
   const params = new URLSearchParams({ page_size: pageSize });
   if (q) params.set('q', q);
-  const r = await fetch(`${BASE}/api/chunks/${sessionId}?${params}`);
+  const r = await fetch(`${BASE}/api/chunks/${workflowId}?${params}`);
   return r.json();
 }
 
-export async function rechunk(sessionId, maxChars = 2000, minChars = 200) {
-  const r = await fetch(`${BASE}/api/rechunk/${sessionId}`, {
+export async function rechunk(workflowId, maxChars = 2000, minChars = 200) {
+  const r = await fetch(`${BASE}/api/rechunk/${workflowId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_chars: maxChars, min_chars: minChars }),
@@ -46,21 +46,21 @@ export async function rechunk(sessionId, maxChars = 2000, minChars = 200) {
   return r.json();
 }
 
-export async function saveSettings(sessionId, settings) {
-  await fetch(`${BASE}/api/session/${sessionId}/settings`, {
+export async function saveSettings(workflowId, settings) {
+  await fetch(`${BASE}/api/workflow/${workflowId}/settings`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   });
 }
 
-export async function getPromptPreview(sessionId) {
-  const r = await fetch(`${BASE}/api/prompt-preview/${sessionId}`);
+export async function getPromptPreview(workflowId) {
+  const r = await fetch(`${BASE}/api/prompt-preview/${workflowId}`);
   return r.json();
 }
 
-export async function tune(sessionId, chunkIndex, promptHint, systemPrompt) {
-  const r = await fetch(`${BASE}/api/tune/${sessionId}`, {
+export async function tune(workflowId, chunkIndex, promptHint, systemPrompt) {
+  const r = await fetch(`${BASE}/api/tune/${workflowId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chunk_index: chunkIndex, prompt_hint: promptHint, system_prompt: systemPrompt }),
@@ -68,13 +68,13 @@ export async function tune(sessionId, chunkIndex, promptHint, systemPrompt) {
   return r.json();
 }
 
-export async function getTuneHistory(sessionId) {
-  const r = await fetch(`${BASE}/api/tune-history/${sessionId}`);
+export async function getTuneHistory(workflowId) {
+  const r = await fetch(`${BASE}/api/tune-history/${workflowId}`);
   return r.json();
 }
 
-export async function sampleCheck(sessionId, sampleSize = 5) {
-  const r = await fetch(`${BASE}/api/sample-check/${sessionId}`, {
+export async function sampleCheck(workflowId, sampleSize = 5) {
+  const r = await fetch(`${BASE}/api/sample-check/${workflowId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sample_size: sampleSize }),
@@ -82,8 +82,8 @@ export async function sampleCheck(sessionId, sampleSize = 5) {
   return r.json();
 }
 
-export function startExecution(sessionId, { onPhase, onProgress, onComplete, onError }) {
-  const src = new EventSource(`${BASE}/api/execute/${sessionId}`);
+export function startExecution(workflowId, { onPhase, onProgress, onComplete, onError }) {
+  const src = new EventSource(`${BASE}/api/execute/${workflowId}`);
   src.addEventListener('phase', e => onPhase?.(JSON.parse(e.data)));
   src.addEventListener('progress', e => onProgress?.(JSON.parse(e.data)));
   src.addEventListener('complete', e => { src.close(); onComplete?.(JSON.parse(e.data)); });
@@ -91,24 +91,24 @@ export function startExecution(sessionId, { onPhase, onProgress, onComplete, onE
   return () => src.close();
 }
 
-export async function getSessionState(sessionId) {
-  const r = await fetch(`${BASE}/api/session/${sessionId}/state`);
+export async function getWorkflowState(workflowId) {
+  const r = await fetch(`${BASE}/api/workflow/${workflowId}/state`);
   if (!r.ok) return null;
   return r.json();
 }
 
-export async function getSkills(sessionId) {
-  const r = await fetch(`${BASE}/api/session/${sessionId}/skills`);
+export async function getSkills(workflowId) {
+  const r = await fetch(`${BASE}/api/workflow/${workflowId}/skills`);
   return r.json();
 }
 
-export async function generateSkills(sessionId) {
-  const r = await fetch(`${BASE}/api/session/${sessionId}/generate-skills`, { method: 'POST' });
+export async function generateSkills(workflowId) {
+  const r = await fetch(`${BASE}/api/workflow/${workflowId}/generate-skills`, { method: 'POST' });
   return r.json();
 }
 
-export async function getManifest(sessionId) {
-  const r = await fetch(`${BASE}/api/session/${sessionId}/manifest`);
+export async function getManifest(workflowId) {
+  const r = await fetch(`${BASE}/api/workflow/${workflowId}/manifest`);
   if (!r.ok) return null;
   return r.json();
 }

@@ -57,7 +57,7 @@ export function useWorkflow() {
         onProgress: (status) => setUploadProgress(status),
         onDone: async () => {
           setLoading(l => ({ ...l, upload: false }));
-          const st = await api.getSessionState(data.workflow_id).catch(() => null);
+          const st = await api.getWorkflowState(data.workflow_id).catch(() => null);
           if (st?.meta) setMeta(st.meta);
           const cs = await api.loadChunks(data.workflow_id).catch(() => ({ items: [], total: 0 }));
           setChunks(cs);
@@ -179,7 +179,7 @@ export function useWorkflow() {
   useEffect(() => {
     if (!workflowId) return;
     (async () => {
-      const st = await api.getSessionState(workflowId).catch(() => null);
+      const st = await api.getWorkflowState(workflowId).catch(() => null);
       if (st?.meta) {
         setMeta(st.meta);
         loadChunks();

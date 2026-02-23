@@ -178,15 +178,15 @@ def _skill_summary(s: dict) -> dict:
     }
 
 
-@router.get("/sessions")
+@router.get("/workflows")
 @router.get("/notebooks")
 async def api_list_workflows():
     """列出所有工作流。"""
     return list_workflows()
 
 
-@router.get("/session/{workflow_id}/state")
-async def api_notebook_state(nb: WorkflowDep):
+@router.get("/workflow/{workflow_id}/state")
+async def api_workflow_state(nb: WorkflowDep):
     """工作流完整状态（页面恢复 UI）。"""
     meta = nb.load_meta()
     skills = nb.load_skills()
@@ -195,7 +195,6 @@ async def api_notebook_state(nb: WorkflowDep):
 
     return {
         "workflow_id": nb.workflow_id,
-        "session_id": nb.workflow_id,
         "meta": meta,
         "status": nb.load_status() or {},
         "total_chunks": total,

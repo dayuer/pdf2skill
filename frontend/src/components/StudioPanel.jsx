@@ -1,4 +1,4 @@
-export default function StudioPanel({ sessionId, skills, onAction }) {
+export default function StudioPanel({ workflowId, skills, onAction }) {
   const cards = [
     { key: 'tune', icon: '🔬', label: '提取对比', color: 'purple' },
     { key: 'sample', icon: '🎲', label: '抽样验证', color: 'green' },

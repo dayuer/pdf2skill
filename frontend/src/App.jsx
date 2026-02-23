@@ -127,7 +127,7 @@ export default function App() {
         />
         <Resizer onResize={handleRightResize} />
         <div style={{ width: rightW, minWidth: 200, flexShrink: 0 }}>
-          <StudioPanel sessionId={s.workflowId} skills={s.skills} onAction={handleRunNode} />
+          <StudioPanel workflowId={s.workflowId} skills={s.skills} onAction={handleRunNode} />
         </div>
       </div>
     </>

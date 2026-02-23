@@ -503,7 +503,6 @@ async def analyze_document(file: UploadFile = File(...)):
 
     return {
         "workflow_id": workflow_id,
-        "session_id": workflow_id,
         "doc_name": load_result.doc_name,
         "format": load_result.format.value,
         "book_type": schema.book_type,
@@ -525,7 +524,7 @@ async def analyze_document(file: UploadFile = File(...)):
 # ══════════════════════════════════════════════
 
 
-@router.put("/session/{workflow_id}/settings")
+@router.put("/workflow/{workflow_id}/settings")
 async def update_settings(workflow_id: str, body: SettingsUpdate):
     """调整提取设置（文档类型、提取策略）。"""
     nb = FileWorkflow(workflow_id)
