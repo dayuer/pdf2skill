@@ -19,7 +19,8 @@ start_backend() {
   fi
   echo "🚀 启动后端 (uvicorn)..."
   cd "$DIR"
-  nohup python3 -m uvicorn src.web_ui:app --host 0.0.0.0 --port 8000 --reload \
+  PYTHON="${PYTHON:-/opt/homebrew/bin/python3.11}"
+  nohup "$PYTHON" -m uvicorn src.web_ui:app --host 0.0.0.0 --port 8000 --reload \
     > "$BACKEND_LOG" 2>&1 &
   echo $! > "$BACKEND_PID"
   echo "   PID: $(cat "$BACKEND_PID") | 日志: $BACKEND_LOG"
