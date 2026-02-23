@@ -290,28 +290,15 @@ async def api_list_workflows():
 # ══════════════════════════════════════════════
 
 
-@router.post("/upload")
+@router.post("/upload/{workflow_id}")
 async def batch_upload(
+    workflow_id: str,
     files: List[UploadFile] = File(...),
-    workflow_id: Optional[str] = None,
-    name: Optional[str] = None,
 ):
-    """批量上传文件 → 存盘 + 去重 + 写进度文件 + 自动开始处理。
-
-    Args:
-        files: 上传的文件列表
-        workflow_id: 可选，指定已有工作流 ID 以追加文件
-        name: 可选，工作流名称（仅新建时生效）
-    """
-    if not workflow_id:
-        workflow_id = generate_workflow_id()
+    """批量上传文件 → 存盘 + 去重 + 写进度文件 + 自动开始处理。"""
     wf = FileWorkflow(workflow_id)
 
-    # 若是新建工作流且给了名称，先保存 meta
-    if name and not wf.load_meta():
-        wf.save_meta(name=name)
-
-    progress = _load_progress(nb)
+    progress = _load_progress(wf)
     saved = []
     skipped = []
 

@@ -13,8 +13,7 @@ export async function uploadFile(file) {
 export async function uploadFiles(files, workflowId) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  if (workflowId) fd.append('workflow_id', workflowId);
-  const r = await fetch(`${BASE}/api/upload`, { method: 'POST', body: fd });
+  const r = await fetch(`${BASE}/api/upload/${workflowId}`, { method: 'POST', body: fd });
   if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
   return r.json();
 }

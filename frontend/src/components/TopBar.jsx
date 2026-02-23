@@ -7,7 +7,7 @@ export default function TopBar({ meta, onReset, onBack }) {
             style={{ fontSize: 16, padding: '4px 8px', marginRight: 4 }}>←</button>
         )}
         <h1 className="logo" onClick={onBack} style={{ cursor: onBack ? 'pointer' : 'default' }}>pdf2skill</h1>
-        {meta && <span className="doc-name">{meta.doc_name}</span>}
+        {meta && <span className="doc-name">{meta.name || meta.doc_name}</span>}
       </div>
       <div className="topbar-right">
         {meta && (
