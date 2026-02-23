@@ -251,7 +251,6 @@ async def _auto_process_worker(workflow_id: str) -> None:
         files=files_info,
     )
     nb.save_schema(schema)
-    nb.save_chunks(filter_result.kept)
     nb.save_status(phase="analyzed", total=len(filter_result.kept))
 
     system_prompt = get_system_prompt_preview(schema.book_type, schema.to_prompt_constraint())
@@ -723,7 +722,6 @@ async def analyze_document(file: UploadFile = File(...)):
         skill_types=schema.fields.get("skill_types", []),
     )
     nb.save_schema(schema)
-    nb.save_chunks(filter_result.kept)
     nb.save_status(phase="analyzed", total=len(filter_result.kept))
 
     system_prompt = get_system_prompt_preview(schema.book_type, schema.to_prompt_constraint())
