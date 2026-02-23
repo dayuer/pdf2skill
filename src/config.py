@@ -95,6 +95,9 @@ class PipelineConfig(BaseSettings):
     use_milvus: bool = False
     milvus_db_path: str = "data/milvus.db"
 
+    # Redis 任务队列（空字符串时 fallback asyncio.Queue）
+    redis_url: str = ""
+
     model_config = {
         "env_file": str(_ENV_PATH),
         "env_file_encoding": "utf-8",

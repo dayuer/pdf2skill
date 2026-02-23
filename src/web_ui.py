@@ -12,6 +12,7 @@ pdf2skill API — FastAPI 入口
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,13 +20,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from .api_analyze import router as analyze_router
-from .api_tune import router as tune_router
-from .api_execute import router as execute_router
-from .api_skills import router as skills_router
-from .api_workflow import router as workflow_router
+from .config import config
+from .task_queue import task_queue
 
-app = FastAPI(title="pdf2skill", version="0.4")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动：初始化任务队列 + 注册 worker
+    backend = await task_queue.init(config.redis_url)
+    from .api_analyze import chunk_worker_handler
+    task_queue.register_worker("chunk", chunk_worker_handler)
+    yield
+    # 关闭
+    await task_queue.close()
+
+
+app = FastAPI(title="pdf2skill", version="0.4", lifespan=lifespan)
 
 # CORS — 开发模式允许 Vite dev server
 app.add_middleware(
@@ -36,6 +46,12 @@ app.add_middleware(
 )
 
 # 注册 API 路由
+from .api_analyze import router as analyze_router
+from .api_tune import router as tune_router
+from .api_execute import router as execute_router
+from .api_skills import router as skills_router
+from .api_workflow import router as workflow_router
+
 app.include_router(analyze_router)
 app.include_router(tune_router)
 app.include_router(execute_router)

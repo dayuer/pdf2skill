@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from .task_queue import task_queue
 import json
 import logging
 import time
@@ -445,11 +447,17 @@ async def chunk_single_file(workflow_id: str, filename: str):
     task_key = f"chunk:{workflow_id}:{filename}"
 
     # 初始化进度
-    _chunk_progress[task_key] = {"status": "queued", "message": "排队等待分块", "segments_total": 0, "segments_done": 0, "chunks": 0}
+    task_queue.set_progress(task_key, {
+        "status": "queued", "message": "排队等待分块",
+        "segments_total": 0, "segments_done": 0, "chunks": 0,
+    })
 
-    # 入队（队列 + 消费者自动串行执行）
-    await _chunk_queue.put((workflow_id, filename, task_key))
-    _ensure_chunk_consumer()
+    # 入队
+    await task_queue.enqueue("chunk", {
+        "workflow_id": workflow_id,
+        "filename": filename,
+        "task_key": task_key,
+    })
 
     return {
         "workflow_id": workflow_id,
@@ -459,29 +467,9 @@ async def chunk_single_file(workflow_id: str, filename: str):
     }
 
 
-# ── 分块任务队列（asyncio.Queue，无需 Redis）──
-_chunk_queue: asyncio.Queue = asyncio.Queue()
-_chunk_progress: dict[str, dict] = {}
-_chunk_consumer_task: asyncio.Task | None = None
-
-
-def _ensure_chunk_consumer():
-    """确保全局只有一个消费者 worker 在运行。"""
-    global _chunk_consumer_task
-    if _chunk_consumer_task is None or _chunk_consumer_task.done():
-        _chunk_consumer_task = asyncio.create_task(_chunk_consumer_loop())
-
-
-async def _chunk_consumer_loop():
-    """单消费者循环 — 从队列逐个取任务串行执行。"""
-    while True:
-        try:
-            workflow_id, filename, task_key = await asyncio.wait_for(_chunk_queue.get(), timeout=60)
-        except asyncio.TimeoutError:
-            # 60 秒无新任务，退出消费者（下次入队时重启）
-            break
-        await _chunk_worker(workflow_id, filename, task_key)
-        _chunk_queue.task_done()
+async def chunk_worker_handler(payload: dict) -> None:
+    """task_queue 注册的 chunk worker 入口。"""
+    await _chunk_worker(payload["workflow_id"], payload["filename"], payload["task_key"])
 
 
 async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
@@ -499,13 +487,13 @@ async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
 
     # 分段
     segments = _split_text_segments(text, max_chars=4000)
-    _chunk_progress[task_key] = {
+    task_queue.set_progress(task_key, {
         "status": "chunking",
         "message": f"共 {len(segments)} 段，开始处理",
         "segments_total": len(segments),
         "segments_done": 0,
         "chunks": 0,
-    }
+    })
 
     from .llm_client import AsyncDeepSeekClient
     client = AsyncDeepSeekClient()
@@ -523,35 +511,35 @@ async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
             parsed = _parse_jsonl_response(resp.content)
             all_chunks.extend(parsed)
 
-            _chunk_progress[task_key] = {
+            task_queue.set_progress(task_key, {
                 "status": "chunking",
                 "message": f"已完成 {seg_idx + 1}/{len(segments)} 段，累计 {len(all_chunks)} 个片段",
                 "segments_total": len(segments),
                 "segments_done": seg_idx + 1,
                 "chunks": len(all_chunks),
-            }
+            })
 
         # 保存到 chunk/ 目录
         jsonl_path = nb.chunk_dir / f"{stem}.jsonl"
         lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
         jsonl_path.write_text("\n".join(lines), encoding="utf-8")
 
-        _chunk_progress[task_key] = {
+        task_queue.set_progress(task_key, {
             "status": "done",
             "message": f"已分块 {len(all_chunks)} 个片段 → chunk/{stem}.jsonl",
             "segments_total": len(segments),
             "segments_done": len(segments),
             "chunks": len(all_chunks),
             "jsonl_path": f"chunk/{stem}.jsonl",
-        }
+        })
     except Exception as e:
-        _chunk_progress[task_key] = {
+        task_queue.set_progress(task_key, {
             "status": "error",
             "message": str(e),
             "segments_total": len(segments),
-            "segments_done": _chunk_progress.get(task_key, {}).get("segments_done", 0),
+            "segments_done": 0,
             "chunks": len(all_chunks),
-        }
+        })
 
 
 @router.get("/chunk/progress/{workflow_id}/{filename}")
@@ -561,7 +549,7 @@ async def chunk_progress_sse(workflow_id: str, filename: str):
 
     async def _stream():
         while True:
-            progress = _chunk_progress.get(task_key, {"status": "unknown", "message": "无分块任务"})
+            progress = await task_queue.get_progress(task_key)
             yield f"data: {json.dumps(progress, ensure_ascii=False)}\n\n"
 
             if progress.get("status") in ("done", "error"):

@@ -31,3 +31,4 @@ pymilvus>=2.3
 # ═══ 工具 ═══
 python-dotenv>=1.0
 aiofiles>=23.0
+redis>=5.0                  # 任务队列后端（可选，无则 fallback asyncio.Queue）
