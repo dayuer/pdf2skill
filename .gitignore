@@ -37,3 +37,4 @@ GEMINI.md
 frontend/node_modules/
 static/dist/
 uploads/*
+tasks/*

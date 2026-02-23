@@ -182,20 +182,24 @@ export function useWorkflow() {
     if (pp.baseline_hint) setPromptHint(pp.baseline_hint);
   }, [workflowId]);
 
-  // 笔记本恢复
+  // 工作流恢复
   useEffect(() => {
     if (!workflowId) return;
     (async () => {
-      const st = await api.getSessionState(workflowId);
-      if (!st) { reset(); return; }
-      setMeta(st.meta);
-      loadChunks();
-      loadSkills();
-      const pp = await api.getPromptPreview(workflowId).catch(() => null);
-      if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
-      if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
-      const h = await api.getTuneHistory(workflowId).catch(() => []);
-      setTuneHistory(h);
+      const st = await api.getSessionState(workflowId).catch(() => null);
+      if (st?.meta) {
+        setMeta(st.meta);
+        loadChunks();
+        loadSkills();
+        const pp = await api.getPromptPreview(workflowId).catch(() => null);
+        if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
+        if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
+        const h = await api.getTuneHistory(workflowId).catch(() => []);
+        setTuneHistory(h);
+      }
+      // 无论是否有 meta，都尝试加载文件列表
+      const uf = await api.getUploadFiles(workflowId).catch(() => ({ files: [] }));
+      setUploadFiles(uf.files || []);
     })();
   }, []); // eslint-disable-line
 
