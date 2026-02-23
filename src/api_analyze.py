@@ -435,30 +435,46 @@ async def chunk_single_file(workflow_id: str, filename: str):
     if not clean_path.exists() and not raw_path.exists():
         raise HTTPException(404, f"文件未处理或文本为空: {filename}")
 
-    # 取消可能正在进行的旧任务
     task_key = f"chunk:{workflow_id}:{filename}"
-    old = _chunk_tasks.get(task_key)
-    if old and not old.done():
-        old.cancel()
 
     # 初始化进度
-    _chunk_progress[task_key] = {"status": "pending", "message": "等待分块", "segments_total": 0, "segments_done": 0, "chunks": 0}
+    _chunk_progress[task_key] = {"status": "queued", "message": "排队等待分块", "segments_total": 0, "segments_done": 0, "chunks": 0}
 
-    # 启动后台任务
-    task = asyncio.create_task(_chunk_worker(workflow_id, filename, task_key))
-    _chunk_tasks[task_key] = task
+    # 入队（队列 + 消费者自动串行执行）
+    await _chunk_queue.put((workflow_id, filename, task_key))
+    _ensure_chunk_consumer()
 
     return {
         "workflow_id": workflow_id,
         "filename": filename,
-        "status": "started",
-        "message": "分块任务已启动，通过 SSE 查看进度。",
+        "status": "queued",
+        "message": "分块任务已入队，通过 SSE 查看进度。",
     }
 
 
-# 后台分块状态
-_chunk_tasks: dict[str, asyncio.Task] = {}
+# ── 分块任务队列（asyncio.Queue，无需 Redis）──
+_chunk_queue: asyncio.Queue = asyncio.Queue()
 _chunk_progress: dict[str, dict] = {}
+_chunk_consumer_task: asyncio.Task | None = None
+
+
+def _ensure_chunk_consumer():
+    """确保全局只有一个消费者 worker 在运行。"""
+    global _chunk_consumer_task
+    if _chunk_consumer_task is None or _chunk_consumer_task.done():
+        _chunk_consumer_task = asyncio.create_task(_chunk_consumer_loop())
+
+
+async def _chunk_consumer_loop():
+    """单消费者循环 — 从队列逐个取任务串行执行。"""
+    while True:
+        try:
+            workflow_id, filename, task_key = await asyncio.wait_for(_chunk_queue.get(), timeout=60)
+        except asyncio.TimeoutError:
+            # 60 秒无新任务，退出消费者（下次入队时重启）
+            break
+        await _chunk_worker(workflow_id, filename, task_key)
+        _chunk_queue.task_done()
 
 
 async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
