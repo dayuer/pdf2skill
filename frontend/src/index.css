@@ -54,6 +54,11 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .file-status-badge.done{background:#e6f4ea;color:#188038}
 .file-status-badge.error{background:#fce8e6;color:#c5221f}
 .file-status-badge.extracting,.file-status-badge.cleaning{background:#e8f0fe;color:#1a73e8}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:999;backdrop-filter:blur(2px)}
+.modal-card{background:#fff;border-radius:16px;padding:24px;width:380px;max-width:90vw;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+.modal-input{width:100%;padding:12px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none;box-sizing:border-box}
+.modal-input:focus{border-color:#1a73e8;box-shadow:0 0 0 2px rgba(26,115,232,.2)}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .upload-icon{font-size:18px}
 .upload-text{color:#1f1f1f;font-size:13px}
 

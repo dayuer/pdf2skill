@@ -8,8 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, Query, HTTPException
 
 from .config import config
-from .deps import NotebookDep
-from .notebook_store import FileNotebook
+from .deps import WorkflowDep
+from .workflow_store import FileWorkflow
 from .skill_registry import SkillRegistry
 from .skill_graph import SkillGraphBuilder
 from .vector_store import SkillVectorStore
@@ -20,14 +20,14 @@ _skill_registry = SkillRegistry()
 _vector_store = SkillVectorStore()
 
 
-@router.get("/session/{notebook_id}/skills")
-async def api_session_skills(nb: NotebookDep):
+@router.get("/session/{workflow_id}/skills")
+async def api_session_skills(nb: WorkflowDep):
     """获取已提取的所有 Skill。"""
     return nb.load_skills()
 
 
-@router.post("/session/{notebook_id}/generate-skills")
-async def api_generate_skills(nb: NotebookDep):
+@router.post("/session/{workflow_id}/generate-skills")
+async def api_generate_skills(nb: WorkflowDep):
     """生成 Claude Code Skills 标准格式。"""
     from .skill_generator import generate_claude_skills
     from .skill_validator import ValidatedSkill, SKUType
@@ -62,8 +62,8 @@ async def api_generate_skills(nb: NotebookDep):
     return {"ok": True, "skills_dir": str(skills_path), "total_skills": len(validated), "manifest": manifest}
 
 
-@router.get("/session/{notebook_id}/skill/{skill_slug}")
-async def api_get_skill(nb: NotebookDep, skill_slug: str):
+@router.get("/session/{workflow_id}/skill/{skill_slug}")
+async def api_get_skill(nb: WorkflowDep, skill_slug: str):
     """获取单个 Claude Skill 完整内容。"""
     meta = nb.load_meta() or {}
     doc_name = meta.get("doc_name", "document")
@@ -82,8 +82,8 @@ async def api_get_skill(nb: NotebookDep, skill_slug: str):
     }
 
 
-@router.get("/session/{notebook_id}/manifest")
-async def api_get_manifest(nb: NotebookDep):
+@router.get("/session/{workflow_id}/manifest")
+async def api_get_manifest(nb: WorkflowDep):
     """获取 Claude Skills manifest.json。"""
     meta = nb.load_meta() or {}
     doc_name = meta.get("doc_name", "document")
@@ -96,8 +96,8 @@ async def api_get_manifest(nb: NotebookDep):
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
-@router.post("/session/{notebook_id}/skill-graph")
-async def api_skill_graph(nb: NotebookDep):
+@router.post("/session/{workflow_id}/skill-graph")
+async def api_skill_graph(nb: WorkflowDep):
     """构建 Skill 关系图谱。"""
     skills_data = nb.load_skills()
     if not skills_data:

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { useNotebook } from './hooks/useNotebook';
+import { useWorkflow } from './hooks/useWorkflow';
 import HomePage from './components/HomePage';
 import TopBar from './components/TopBar';
 import SourcePanel from './components/SourcePanel';
@@ -9,8 +9,8 @@ import Resizer from './components/Resizer';
 import * as api from './api';
 
 export default function App() {
-  const s = useNotebook();
-  const [page, setPage] = useState(s.notebookId || s.sessionId ? 'workspace' : 'home');
+  const s = useWorkflow();
+  const [page, setPage] = useState(s.workflowId ? 'workspace' : 'home');
 
   const [leftW, setLeftW] = useState(260);
   const [rightW, setRightW] = useState(280);
@@ -24,8 +24,8 @@ export default function App() {
     setRightW(Math.max(200, Math.min(450, rightBase.current - delta)));
   }, []);
 
-  const handleOpen = useCallback((sessionId) => {
-    localStorage.setItem('pdf2skill_session', sessionId);
+  const handleOpen = useCallback((wfId) => {
+    localStorage.setItem('pdf2skill_workflow', wfId);
     window.location.reload();
   }, []);
 
@@ -33,11 +33,11 @@ export default function App() {
   const handleBack = useCallback(() => { setPage('home'); }, []);
 
   const handleRunNode = useCallback(async (nodeId) => {
-    if (!s.sessionId) { alert('请先上传文档'); return; }
+    if (!s.workflowId) { alert('请先上传文档'); return; }
     switch (nodeId) {
       case 'schema':
       case 'save_prompt':
-        await api.saveSettings(s.sessionId, { system_prompt: s.systemPrompt });
+        await api.saveSettings(s.workflowId, { system_prompt: s.systemPrompt });
         alert('Prompt 已保存');
         break;
       case 'extract':
@@ -57,17 +57,17 @@ export default function App() {
       default:
         break;
     }
-  }, [s, s.sessionId, s.systemPrompt]);
+  }, [s, s.workflowId, s.systemPrompt]);
 
   const handleExecuteAll = useCallback(() => {
-    if (!s.sessionId) { alert('请先上传文档'); return; }
+    if (!s.workflowId) { alert('请先上传文档'); return; }
     if (confirm('开始全量执行？将使用当前策略处理所有 chunk。')) s.doExecute();
   }, [s]);
 
   const handleSaveSystemPrompt = useCallback(async () => {
-    if (!s.sessionId) return;
-    await api.saveSettings(s.sessionId, { system_prompt: s.systemPrompt });
-  }, [s.sessionId, s.systemPrompt]);
+    if (!s.workflowId) return;
+    await api.saveSettings(s.workflowId, { system_prompt: s.systemPrompt });
+  }, [s.workflowId, s.systemPrompt]);
 
   const handleUpload = useCallback(async (file) => {
     const data = await s.upload(file);
@@ -115,7 +115,7 @@ export default function App() {
         />
         <Resizer onResize={handleRightResize} />
         <div style={{ width: rightW, minWidth: 200, flexShrink: 0 }}>
-          <StudioPanel sessionId={s.sessionId} skills={s.skills} onAction={handleRunNode} />
+          <StudioPanel sessionId={s.workflowId} skills={s.skills} onAction={handleRunNode} />
         </div>
       </div>
     </>

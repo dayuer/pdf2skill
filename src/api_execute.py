@@ -1,4 +1,4 @@
-"""阶段三：SSE 全量执行 + 笔记本列表 + 状态查询"""
+"""阶段三：SSE 全量执行 + 工作流列表 + 状态查询"""
 
 from __future__ import annotations
 
@@ -10,19 +10,19 @@ from fastapi import APIRouter, Request
 
 from sse_starlette.sse import EventSourceResponse
 
-from .deps import NotebookDep
+from .deps import WorkflowDep
 from .llm_client import AsyncDeepSeekClient
 from .skill_extractor import extract_skills_batch
 from .skill_validator import SkillValidator
-from .notebook_store import FileNotebook, list_notebooks
+from .workflow_store import FileWorkflow, list_workflows
 from .callbacks import StatusCallback, EventType, create_logging_callback
 from .api_analyze import get_schema
 
 router = APIRouter(prefix="/api", tags=["execute"])
 
 
-@router.get("/execute/{notebook_id}")
-async def execute_full(request: Request, nb: NotebookDep):
+@router.get("/execute/{workflow_id}")
+async def execute_full(request: Request, nb: WorkflowDep):
     """SSE 全量执行（断点续传）。"""
 
     async def event_generator():
@@ -45,7 +45,7 @@ async def execute_full(request: Request, nb: NotebookDep):
         callback.add_callback(sse_callback)
 
         async def pipeline_task():
-            schema = get_schema(nb.notebook_id, nb)
+            schema = get_schema(nb.workflow_id, nb)
             prompt_hint = nb.get_active_prompt_hint()
             total = nb.chunk_count()
             skill_idx = nb.skill_count()
@@ -68,7 +68,7 @@ async def execute_full(request: Request, nb: NotebookDep):
                 skills = nb.load_skills()
                 await callback.emit(EventType.INFO, {
                     "final_skills": len(skills),
-                    "output_dir": f"notebooks/{nb.notebook_id}/skills/",
+                    "output_dir": f"workflows/{nb.workflow_id}/skills/",
                     "skills": [_skill_summary(s) for s in skills[:30]],
                     "elapsed_s": 0, "resumed": True,
                 })
@@ -148,7 +148,7 @@ async def execute_full(request: Request, nb: NotebookDep):
 
             await callback.emit(EventType.INFO, {
                 "final_skills": len(all_skills),
-                "output_dir": f"notebooks/{nb.notebook_id}/skills/",
+                "output_dir": f"workflows/{nb.workflow_id}/skills/",
                 "sku_stats": sku_stats,
                 "skills": [_skill_summary(s) for s in all_skills[:30]],
                 "elapsed_s": round(elapsed_total, 1),
@@ -180,22 +180,22 @@ def _skill_summary(s: dict) -> dict:
 
 @router.get("/sessions")
 @router.get("/notebooks")
-async def api_list_notebooks():
-    """列出所有笔记本。"""
-    return list_notebooks()
+async def api_list_workflows():
+    """列出所有工作流。"""
+    return list_workflows()
 
 
-@router.get("/session/{notebook_id}/state")
-async def api_notebook_state(nb: NotebookDep):
-    """笔记本完整状态（页面恢复 UI）。"""
+@router.get("/session/{workflow_id}/state")
+async def api_notebook_state(nb: WorkflowDep):
+    """工作流完整状态（页面恢复 UI）。"""
     meta = nb.load_meta()
     skills = nb.load_skills()
     total = nb.chunk_count()
     done = nb.get_done_count()
 
     return {
-        "notebook_id": nb.notebook_id,
-        "session_id": nb.notebook_id,
+        "workflow_id": nb.workflow_id,
+        "session_id": nb.workflow_id,
         "meta": meta,
         "status": nb.load_status() or {},
         "total_chunks": total,

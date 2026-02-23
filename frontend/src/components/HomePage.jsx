@@ -9,70 +9,97 @@ function getAvatar(name) {
 
 function formatDate(ts) {
   if (!ts) return '';
-  const d = new Date(ts);
-  if (isNaN(d)) return ts;
+  const d = new Date(ts * 1000);
+  if (isNaN(d)) return '';
   return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 export default function HomePage({ onOpen, onNew }) {
-  const [sessions, setSessions] = useState([]);
+  const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('list'); // 'grid' | 'list'
-  const [tab, setTab] = useState('mine');
+  const [view, setView] = useState('list');
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/sessions')
+  const loadWorkflows = () => {
+    setLoading(true);
+    fetch('/api/workflows')
       .then(r => r.json())
-      .then(data => { setSessions(data || []); setLoading(false); })
+      .then(data => { setWorkflows(data || []); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  };
 
-  const tabs = [
-    { key: 'all', label: '全部' },
-    { key: 'mine', label: '我的工作流' },
-    { key: 'featured', label: '精选工作流' },
-    { key: 'shared', label: '与我共享' },
-  ];
+  useEffect(loadWorkflows, []);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    try {
+      const r = await fetch(`/api/workflow/create?name=${encodeURIComponent(newName.trim())}`, { method: 'POST' });
+      const data = await r.json();
+      setShowCreate(false);
+      setNewName('');
+      onOpen(data.workflow_id);
+    } catch {
+      alert('创建失败');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="home">
-      {/* 顶栏 */}
       <header className="home-topbar">
         <div className="home-topbar-left">
           <span className="home-logo-icon">◉</span>
           <span className="home-logo-text">pdf2skill</span>
         </div>
         <div className="home-topbar-right">
-          <button className="btn btn-ghost btn-sm">⚙ 设置</button>
           <span className="tag">ULTRA</span>
           <div className="home-avatar">👤</div>
         </div>
       </header>
 
-      {/* 标签栏 + 视图切换 */}
       <div className="home-toolbar">
         <div className="home-tabs">
-          {tabs.map(t => (
-            <button key={t.key}
-              className={`home-tab${tab === t.key ? ' active' : ''}`}
-              onClick={() => setTab(t.key)}>
-              {t.label}
-            </button>
-          ))}
+          <button className="home-tab active">我的工作流</button>
         </div>
         <div className="home-view-controls">
           <button className={`view-btn${view === 'grid' ? ' active' : ''}`}
             onClick={() => setView('grid')} title="网格视图">⊞</button>
           <button className={`view-btn${view === 'list' ? ' active' : ''}`}
             onClick={() => setView('list')} title="列表视图">☰</button>
-          <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }}>最近 ▾</button>
-          <button className="btn btn-primary" style={{ marginLeft: 8 }} onClick={onNew}>
-            ＋ 新建
+          <button className="btn btn-primary" style={{ marginLeft: 8 }}
+            onClick={() => setShowCreate(true)}>
+            ＋ 新建工作流
           </button>
         </div>
       </div>
 
-      {/* 页面标题 */}
+      {/* 新建工作流对话框 */}
+      {showCreate && (
+        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 16px' }}>新建工作流</h3>
+            <input
+              className="modal-input"
+              placeholder="输入工作流名称…"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
+              <button className="btn btn-primary" onClick={handleCreate} disabled={creating || !newName.trim()}>
+                {creating ? '创建中…' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="home-content">
         <h2 className="home-title">我的工作流</h2>
 
@@ -84,29 +111,29 @@ export default function HomePage({ onOpen, onNew }) {
         {!loading && view === 'list' && (
           <div className="home-list">
             <div className="home-list-header">
-              <span className="col-title">标题</span>
-              <span className="col-source">来源</span>
+              <span className="col-title">名称</span>
+              <span className="col-source">文件 / 分块</span>
               <span className="col-date">创建日期</span>
-              <span className="col-role">角色</span>
               <span className="col-action"></span>
             </div>
-            {sessions.length === 0 && (
+            {workflows.length === 0 && (
               <div className="home-empty">
                 <div style={{ fontSize: 48, marginBottom: 12 }}>📚</div>
-                还没有工作流，点击右上角「＋ 新建」开始
+                还没有工作流，点击「＋ 新建工作流」开始
               </div>
             )}
-            {sessions.map(s => (
-              <div key={s.session_id} className="home-list-row"
-                onClick={() => onOpen(s.session_id)}>
+            {workflows.map(w => (
+              <div key={w.workflow_id} className="home-list-row"
+                onClick={() => onOpen(w.workflow_id)}>
                 <span className="col-title">
-                  <span className="row-avatar">{getAvatar(s.doc_name)}</span>
-                  <span className="row-name">{s.doc_name || s.session_id}</span>
+                  <span className="row-avatar">{getAvatar(w.name || w.doc_name)}</span>
+                  <span className="row-name">{w.name || w.doc_name || w.workflow_id}</span>
                 </span>
-                <span className="col-source">{s.filtered_chunks || s.total_chunks || 0} 个来源</span>
-                <span className="col-date">{formatDate(s.created_at)}</span>
-                <span className="col-role">Owner</span>
-                <span className="col-action">⋮</span>
+                <span className="col-source">
+                  {w.uploads?.length || 0} 个文件 · {w.filtered_chunks || 0} 块
+                </span>
+                <span className="col-date">{formatDate(w.created_at)}</span>
+                <span className="col-action">›</span>
               </div>
             ))}
           </div>
@@ -115,25 +142,26 @@ export default function HomePage({ onOpen, onNew }) {
         {/* 网格视图 */}
         {!loading && view === 'grid' && (
           <div className="home-grid">
-            {sessions.length === 0 && (
+            {workflows.length === 0 && (
               <div className="home-empty" style={{ gridColumn: '1 / -1' }}>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>📚</div>
                 还没有工作流
               </div>
             )}
-            {sessions.map(s => (
-              <div key={s.session_id} className="home-grid-card"
-                onClick={() => onOpen(s.session_id)}>
-                <div className="grid-card-icon">{getAvatar(s.doc_name)}</div>
-                <div className="grid-card-name">{s.doc_name || s.session_id}</div>
+            {workflows.map(w => (
+              <div key={w.workflow_id} className="home-grid-card"
+                onClick={() => onOpen(w.workflow_id)}>
+                <div className="grid-card-icon">{getAvatar(w.name || w.doc_name)}</div>
+                <div className="grid-card-name">{w.name || w.doc_name || w.workflow_id}</div>
                 <div className="grid-card-meta">
-                  {s.filtered_chunks || 0} 个来源 · {formatDate(s.created_at)}
+                  {w.uploads?.length || 0} 个文件 · {w.filtered_chunks || 0} 块
+                  · {formatDate(w.created_at)}
                 </div>
                 <div className="grid-card-footer">
                   <span className="grid-card-status">
-                    {s.skills_on_disk > 0 ? `${s.skills_on_disk} Skills` : '未提取'}
+                    {w.skills_on_disk > 0 ? `${w.skills_on_disk} Skills` : '未提取'}
                   </span>
-                  <span>⋮</span>
+                  <span>›</span>
                 </div>
               </div>
             ))}

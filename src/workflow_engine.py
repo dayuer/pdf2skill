@@ -177,7 +177,7 @@ class WorkflowEngine:
 
         Args:
             workflow: 运行时工作流
-            context: 共享上下文（notebook_id、FileNotebook 等）
+            context: 共享上下文（workflow_id、FileWorkflow 等）
             on_event: 事件回调 (event_type, node_id, data)
         """
         run_id = f"run-{int(time.time() * 1000)}"

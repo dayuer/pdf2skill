@@ -6,12 +6,12 @@ import random
 
 from fastapi import APIRouter, Query
 
-from .deps import NotebookDep
+from .deps import WorkflowDep
 from .schemas import TuneRequest, SampleRequest
 from .llm_client import AsyncDeepSeekClient, DeepSeekClient
 from .skill_extractor import extract_skills_batch, extract_skill_from_chunk
 from .skill_validator import SkillValidator, ValidatedSkill
-from .notebook_store import FileNotebook
+from .workflow_store import FileWorkflow
 from .api_analyze import get_schema
 
 router = APIRouter(prefix="/api", tags=["tune"])
@@ -25,9 +25,9 @@ def _validate_batch(raw_skills: list, source_chunks: list) -> tuple[list[Validat
     return validator.validate_batch(raw_skills, source_texts=src_texts)
 
 
-@router.get("/chunks/{notebook_id}")
+@router.get("/chunks/{workflow_id}")
 async def list_chunks(
-    nb: NotebookDep,
+    nb: WorkflowDep,
     q: str = Query("", description="搜索关键词"),
     recommend: bool = Query(False, description="随机推荐 5 个"),
     page: int = Query(1, ge=1),
@@ -64,8 +64,8 @@ async def list_chunks(
     }
 
 
-@router.post("/tune/{notebook_id}")
-async def tune_chunk(nb: NotebookDep, body: TuneRequest):
+@router.post("/tune/{workflow_id}")
+async def tune_chunk(nb: WorkflowDep, body: TuneRequest):
     """对单个 chunk 执行提取 + 校验，写入版本链。"""
     target = nb.load_chunks_by_indices([body.chunk_index])
     if not target:
@@ -73,7 +73,7 @@ async def tune_chunk(nb: NotebookDep, body: TuneRequest):
         raise HTTPException(404, f"chunk {body.chunk_index} 不存在")
     chunk = target[0]
 
-    schema = get_schema(nb.notebook_id, nb)
+    schema = get_schema(nb.workflow_id, nb)
     raw_skills = extract_skill_from_chunk(
         chunk, schema, client=DeepSeekClient(),
         prompt_hint=body.prompt_hint,
@@ -107,17 +107,17 @@ async def tune_chunk(nb: NotebookDep, body: TuneRequest):
     }
 
 
-@router.get("/tune-history/{notebook_id}")
-async def get_tune_history(nb: NotebookDep):
+@router.get("/tune-history/{workflow_id}")
+async def get_tune_history(nb: WorkflowDep):
     """完整调优历史（版本链）。"""
     return nb.load_tune_history()
 
 
-@router.post("/sample-check/{notebook_id}")
-async def sample_check(nb: NotebookDep, body: SampleRequest):
+@router.post("/sample-check/{workflow_id}")
+async def sample_check(nb: WorkflowDep, body: SampleRequest):
     """随机抽样验证：选 N 个 chunk → 批量提取 → 返回逐条对比。"""
     chunks = nb.load_chunks()
-    schema = get_schema(nb.notebook_id, nb)
+    schema = get_schema(nb.workflow_id, nb)
     prompt_hint = nb.get_active_prompt_hint()
     sample = random.sample(chunks, min(body.sample_size, len(chunks)))
 
@@ -148,11 +148,11 @@ async def sample_check(nb: NotebookDep, body: SampleRequest):
     }
 
 
-@router.post("/preview/{notebook_id}")
-async def preview_sample(nb: NotebookDep, sample_size: int = Query(5, ge=1, le=50)):
+@router.post("/preview/{workflow_id}")
+async def preview_sample(nb: WorkflowDep, sample_size: int = Query(5, ge=1, le=50)):
     """采样 N 个 chunk → 提取 → 校验 → 写盘 → 返回预览。"""
     chunks = nb.load_chunks()
-    schema = get_schema(nb.notebook_id, nb)
+    schema = get_schema(nb.workflow_id, nb)
 
     if len(chunks) <= sample_size:
         sample = chunks

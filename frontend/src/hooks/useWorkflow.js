@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import * as api from '../api';
 
-export function useNotebook() {
-  const [notebookId, setNotebookId] = useState(() => localStorage.getItem('pdf2skill_notebook'));
+export function useWorkflow() {
+  const [workflowId, setWorkflowId] = useState(() => localStorage.getItem('pdf2skill_workflow'));
   const [meta, setMeta] = useState(null);
   const [chunks, setChunks] = useState({ items: [], total: 0 });
   const [selectedChunk, setSelectedChunk] = useState(null);
@@ -18,19 +18,16 @@ export function useNotebook() {
   const cleanupRef = useRef(null);
 
   // 向后兼容：同时暴露 sessionId
-  const sessionId = notebookId;
+  const sessionId = workflowId;
 
-  const persistNotebook = useCallback((id) => {
-    setNotebookId(id);
-    localStorage.setItem('pdf2skill_notebook', id);
-    // 向后兼容
-    localStorage.setItem('pdf2skill_session', id);
+  const persistWorkflow = useCallback((id) => {
+    setWorkflowId(id);
+    localStorage.setItem('pdf2skill_workflow', id);
   }, []);
 
   const reset = useCallback(() => {
-    localStorage.removeItem('pdf2skill_notebook');
-    localStorage.removeItem('pdf2skill_session');
-    setNotebookId(null); setMeta(null); setChunks({ items: [], total: 0 });
+    localStorage.removeItem('pdf2skill_workflow');
+    setWorkflowId(null); setMeta(null); setChunks({ items: [], total: 0 });
     setSelectedChunk(null); setTuneResult(null); setTuneHistory([]);
     setSampleResult(null); setExecuteState(null); setSkills([]);
   }, []);
@@ -40,13 +37,13 @@ export function useNotebook() {
     setLoading(l => ({ ...l, upload: true }));
     try {
       const data = await api.uploadFile(file);
-      persistNotebook(data.notebook_id || data.session_id);
+      persistWorkflow(data.workflow_id);
       setMeta(data);
       if (data.baseline_hint) setPromptHint(data.baseline_hint);
       if (data.system_prompt) setSystemPrompt(data.system_prompt);
       return data;
     } finally { setLoading(l => ({ ...l, upload: false })); }
-  }, [persistNotebook]);
+  }, [persistWorkflow]);
 
   // 批量上传（自动开始处理）
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -57,24 +54,24 @@ export function useNotebook() {
     setLoading(l => ({ ...l, upload: true }));
     setUploadProgress({});
     try {
-      const data = await api.uploadFiles(files, notebookId);
-      persistNotebook(data.notebook_id);
+      const data = await api.uploadFiles(files, workflowId);
+      persistWorkflow(data.workflow_id);
 
       // 监听 SSE 处理进度
-      const cleanup = api.watchUploadProgress(data.notebook_id, {
+      const cleanup = api.watchUploadProgress(data.workflow_id, {
         onProgress: (status) => setUploadProgress(status),
         onDone: async () => {
           setLoading(l => ({ ...l, upload: false }));
           // 加载最终状态
-          const st = await api.getSessionState(data.notebook_id).catch(() => null);
+          const st = await api.getSessionState(data.workflow_id).catch(() => null);
           if (st?.meta) setMeta(st.meta);
-          const cs = await api.loadChunks(data.notebook_id).catch(() => ({ items: [], total: 0 }));
+          const cs = await api.loadChunks(data.workflow_id).catch(() => ({ items: [], total: 0 }));
           setChunks(cs);
-          const pp = await api.getPromptPreview(data.notebook_id).catch(() => null);
+          const pp = await api.getPromptPreview(data.workflow_id).catch(() => null);
           if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
           if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
           // 更新文件列表
-          const uf = await api.getUploadFiles(data.notebook_id).catch(() => ({ files: [] }));
+          const uf = await api.getUploadFiles(data.workflow_id).catch(() => ({ files: [] }));
           setUploadFiles(uf.files || []);
         },
         onError: () => {
@@ -88,72 +85,72 @@ export function useNotebook() {
       setLoading(l => ({ ...l, upload: false }));
       throw e;
     }
-  }, [notebookId, persistNotebook]);
+  }, [workflowId, persistWorkflow]);
 
   // 加载文件列表（含处理状态 + 文本）
   const loadUploadFiles = useCallback(async () => {
-    if (!notebookId) return;
-    const data = await api.getUploadFiles(notebookId);
+    if (!workflowId) return;
+    const data = await api.getUploadFiles(workflowId);
     setUploadFiles(data.files || []);
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 重新处理单个文件
   const doReprocess = useCallback(async (filename) => {
-    if (!notebookId) return;
+    if (!workflowId) return;
     setLoading(l => ({ ...l, upload: true }));
     try {
-      const result = await api.reprocessFile(notebookId, filename);
+      const result = await api.reprocessFile(workflowId, filename);
       await loadUploadFiles(); // 刷新文件列表
       return result;
     } finally {
       setLoading(l => ({ ...l, upload: false }));
     }
-  }, [notebookId, loadUploadFiles]);
+  }, [workflowId, loadUploadFiles]);
 
   // 加载 chunks
   const loadChunks = useCallback(async (q) => {
-    if (!notebookId) return;
-    const data = await api.loadChunks(notebookId, q);
+    if (!workflowId) return;
+    const data = await api.loadChunks(workflowId, q);
     setChunks(data);
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 重切
   const doRechunk = useCallback(async () => {
-    if (!notebookId) return;
-    const d = await api.rechunk(notebookId);
+    if (!workflowId) return;
+    const d = await api.rechunk(workflowId);
     if (d.ok) loadChunks();
     return d;
-  }, [notebookId, loadChunks]);
+  }, [workflowId, loadChunks]);
 
   // 调优
   const doTune = useCallback(async () => {
-    if (!notebookId || selectedChunk === null) return;
+    if (!workflowId || selectedChunk === null) return;
     setLoading(l => ({ ...l, tune: true }));
     try {
-      const d = await api.tune(notebookId, selectedChunk, promptHint, systemPrompt);
+      const d = await api.tune(workflowId, selectedChunk, promptHint, systemPrompt);
       setTuneResult(d);
-      const h = await api.getTuneHistory(notebookId);
+      const h = await api.getTuneHistory(workflowId);
       setTuneHistory(h);
       return d;
     } finally { setLoading(l => ({ ...l, tune: false })); }
-  }, [notebookId, selectedChunk, promptHint, systemPrompt]);
+  }, [workflowId, selectedChunk, promptHint, systemPrompt]);
 
   // 抽样
   const doSample = useCallback(async () => {
-    if (!notebookId) return;
+    if (!workflowId) return;
     setLoading(l => ({ ...l, sample: true }));
     try {
-      const d = await api.sampleCheck(notebookId);
+      const d = await api.sampleCheck(workflowId);
       setSampleResult(d);
       return d;
     } finally { setLoading(l => ({ ...l, sample: false })); }
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 全量执行
   const doExecute = useCallback(() => {
-    if (!notebookId) return;
+    if (!workflowId) return;
     setExecuteState({ running: true, pct: 0, text: '准备中...' });
-    const cleanup = api.startExecution(notebookId, {
+    const cleanup = api.startExecution(workflowId, {
       onPhase: d => setExecuteState(s => ({ ...s, text: d.message })),
       onProgress: d => {
         const pct = ((d.completed / d.total) * 100).toFixed(0);
@@ -162,42 +159,42 @@ export function useNotebook() {
       },
       onComplete: d => {
         setExecuteState({ running: false, pct: 100, text: `✅ 完成！${d.final_skills} Skills`, data: d });
-        api.getSkills(notebookId).then(setSkills);
+        api.getSkills(workflowId).then(setSkills);
       },
       onError: () => setExecuteState(s => ({ ...s, running: false, text: '❌ 连接中断' })),
     });
     cleanupRef.current = cleanup;
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 加载技能
   const loadSkills = useCallback(async () => {
-    if (!notebookId) return;
-    const s = await api.getSkills(notebookId);
+    if (!workflowId) return;
+    const s = await api.getSkills(workflowId);
     setSkills(s || []);
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 保存设置
   const doSaveSettings = useCallback(async (settings) => {
-    if (!notebookId) return;
-    await api.saveSettings(notebookId, settings);
-    const pp = await api.getPromptPreview(notebookId);
+    if (!workflowId) return;
+    await api.saveSettings(workflowId, settings);
+    const pp = await api.getPromptPreview(workflowId);
     if (pp.system_prompt) setSystemPrompt(pp.system_prompt);
     if (pp.baseline_hint) setPromptHint(pp.baseline_hint);
-  }, [notebookId]);
+  }, [workflowId]);
 
   // 笔记本恢复
   useEffect(() => {
-    if (!notebookId) return;
+    if (!workflowId) return;
     (async () => {
-      const st = await api.getSessionState(notebookId);
+      const st = await api.getSessionState(workflowId);
       if (!st) { reset(); return; }
       setMeta(st.meta);
       loadChunks();
       loadSkills();
-      const pp = await api.getPromptPreview(notebookId).catch(() => null);
+      const pp = await api.getPromptPreview(workflowId).catch(() => null);
       if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
       if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
-      const h = await api.getTuneHistory(notebookId).catch(() => []);
+      const h = await api.getTuneHistory(workflowId).catch(() => []);
       setTuneHistory(h);
     })();
   }, []); // eslint-disable-line
@@ -207,9 +204,7 @@ export function useNotebook() {
 
   return {
     // 新命名
-    notebookId,
-    // 向后兼容
-    sessionId,
+    workflowId,
     meta, chunks, selectedChunk, setSelectedChunk,
     tuneResult, setTuneResult, tuneHistory,
     sampleResult, executeState, skills, loading,
@@ -221,4 +216,4 @@ export function useNotebook() {
 }
 
 // 向后兼容别名
-export const useSession = useNotebook;
+export const useSession = useWorkflow;

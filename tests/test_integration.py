@@ -46,7 +46,7 @@ class TestConfig:
         from src.config import PipelineConfig
         cfg = PipelineConfig(output_dir=str(tmp_path / "out"), log_dir=str(tmp_path / "log"))
         cfg.ensure_filesystem()
-        assert Path("notebooks").exists()
+        assert Path("workflows").exists()
 
 
 # ──── Component 2: 事件回调 ────

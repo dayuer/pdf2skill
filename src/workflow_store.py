@@ -1,7 +1,7 @@
 """
-笔记本持久化管理 — Notebook Store
+工作流持久化管理 — Workflow Store
 
-每个笔记本对应 notebooks/{notebook_id}/ 目录，包含四个子目录：
+每个工作流对应 workflows/{workflow_id}/ 目录，包含四个子目录：
 
   upload/              — 源文件（PDF/TXT/EPUB，原样保留）
   text/                — 处理后的文本
@@ -24,7 +24,7 @@
   file_hashes.json     — 已上传文件的 SHA-256 去重索引
 
 根目录包含 INDEX.md 索引文件。
-服务器重启后可从磁盘恢复所有笔记本。
+服务器重启后可从磁盘恢复所有工作流。
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ from .schema_generator import SkillSchema
 from .skill_validator import ValidatedSkill, ValidationStatus
 
 
-_NOTEBOOKS_DIR = Path("notebooks")
-_NOTEBOOKS_DIR.mkdir(exist_ok=True)
+_WORKFLOWS_DIR = Path("workflows")
+_WORKFLOWS_DIR.mkdir(exist_ok=True)
 
 # 子目录名称常量
 _SUB_UPLOAD = "upload"
@@ -51,11 +51,11 @@ _SUB_TEXT = "text"
 _SUB_PROMPT = "prompt"
 _SUB_SKILLS = "skills"
 
-_INDEX_FILE = _NOTEBOOKS_DIR / "INDEX.json"
+_INDEX_FILE = _WORKFLOWS_DIR / "INDEX.json"
 
 
-def generate_notebook_id() -> str:
-    """生成唯一笔记本 ID：YYMMDD_xxxx（日期前缀 + 4 位 hex）。
+def generate_workflow_id() -> str:
+    """生成唯一工作流 ID：YYMMDD_xxxx（日期前缀 + 4 位 hex）。
 
     碰撞检测：若 ID 已被占用则重试（最多 100 次）。
     同一天内 65536 个不同 ID，加上碰撞检测，唯一性万无一失。
@@ -64,7 +64,7 @@ def generate_notebook_id() -> str:
     for _ in range(100):
         short = uuid.uuid4().hex[:4]
         candidate = f"{prefix}_{short}"
-        if not (_NOTEBOOKS_DIR / candidate).exists():
+        if not (_WORKFLOWS_DIR / candidate).exists():
             return candidate
     # 极端情况：回退到完整 UUID
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
@@ -88,11 +88,12 @@ def _save_index(index: dict[str, dict]) -> None:
     )
 
 
-def _update_index_entry(notebook_id: str, meta: dict) -> None:
-    """在 INDEX.json 中更新/新增一条笔记本记录"""
+def _update_index_entry(workflow_id: str, meta: dict) -> None:
+    """在 INDEX.json 中更新/新增一条工作流记录"""
     index = _load_index()
-    index[notebook_id] = {
-        "notebook_id": notebook_id,
+    index[workflow_id] = {
+        "workflow_id": workflow_id,
+        "name": meta.get("name", ""),
         "doc_name": meta.get("doc_name", ""),
         "format": meta.get("format", ""),
         "book_type": meta.get("book_type", ""),
@@ -105,19 +106,19 @@ def _update_index_entry(notebook_id: str, meta: dict) -> None:
     _save_index(index)
 
 
-def _remove_index_entry(notebook_id: str) -> None:
+def _remove_index_entry(workflow_id: str) -> None:
     """从 INDEX.json 中删除一条记录"""
     index = _load_index()
-    index.pop(notebook_id, None)
+    index.pop(workflow_id, None)
     _save_index(index)
 
 
-class FileNotebook:
-    """文件化的笔记本 — 自包含所有文件和子目录"""
+class FileWorkflow:
+    """文件化的工作流 — 自包含所有文件和子目录"""
 
-    def __init__(self, notebook_id: str) -> None:
-        self.notebook_id = notebook_id
-        self._dir = _NOTEBOOKS_DIR / notebook_id
+    def __init__(self, workflow_id: str) -> None:
+        self.workflow_id = workflow_id
+        self._dir = _WORKFLOWS_DIR / workflow_id
         self._dir.mkdir(parents=True, exist_ok=True)
         # 自动创建子目录
         for sub in (_SUB_UPLOAD, _SUB_TEXT, _SUB_PROMPT, _SUB_SKILLS):
@@ -183,9 +184,10 @@ class FileNotebook:
     def save_meta(
         self,
         *,
-        doc_name: str,
-        format: str,
-        filepath: str,
+        doc_name: str = "",
+        name: str = "",
+        format: str = "",
+        filepath: str = "",
         book_type: str = "",
         domains: list[str] | None = None,
         total_chunks: int = 0,
@@ -195,11 +197,13 @@ class FileNotebook:
         skill_types: list[str] | None = None,
     ) -> None:
         """保存文档元信息"""
+        existing = self.load_meta() or {}
         data = {
-            "notebook_id": self.notebook_id,
-            "doc_name": doc_name,
-            "format": format,
-            "filepath": filepath,
+            "workflow_id": self.workflow_id,
+            "name": name or existing.get("name", ""),
+            "doc_name": doc_name or existing.get("doc_name", ""),
+            "format": format or existing.get("format", ""),
+            "filepath": filepath or existing.get("filepath", ""),
             "book_type": book_type,
             "domains": domains or [],
             "total_chunks": total_chunks,
@@ -210,7 +214,7 @@ class FileNotebook:
             "created_at": time.time(),
         }
         self._write_json("meta.json", data)
-        _update_index_entry(self.notebook_id, data)
+        _update_index_entry(self.workflow_id, data)
 
     def save_schema(self, schema: SkillSchema) -> None:
         """保存 Schema → text/schema.json"""
@@ -474,13 +478,13 @@ class FileNotebook:
         return safe[:60] if safe else "unnamed"
 
 
-def list_notebooks() -> list[dict]:
-    """列出所有笔记本（优先读 INDEX.json，回退扫描目录）"""
+def list_workflows() -> list[dict]:
+    """列出所有工作流（优先读 INDEX.json，回退扫描目录）"""
     index = _load_index()
     if index:
         result = []
         for nid, entry in sorted(index.items(), key=lambda x: x[1].get("created_at", 0), reverse=True):
-            nb = FileNotebook(nid)
+            nb = FileWorkflow(nid)
             meta = nb.load_meta()
             if meta:
                 meta["skills_on_disk"] = nb.skill_count()
@@ -494,9 +498,9 @@ def list_notebooks() -> list[dict]:
 
     # 回退：扫描目录并重建索引
     notebooks = []
-    for d in sorted(_NOTEBOOKS_DIR.iterdir()):
+    for d in sorted(_WORKFLOWS_DIR.iterdir()):
         if d.is_dir() and (d / "meta.json").exists():
-            nb = FileNotebook(d.name)
+            nb = FileWorkflow(d.name)
             meta = nb.load_meta()
             if meta:
                 _update_index_entry(d.name, meta)

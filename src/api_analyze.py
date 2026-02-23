@@ -23,7 +23,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 
 from .config import config
-from .deps import NotebookDep
+from .deps import WorkflowDep
 from .schemas import SettingsUpdate, RechunkRequest
 from .document_loader import load_document
 from .llm_client import DeepSeekClient
@@ -33,7 +33,7 @@ from .semantic_filter import filter_chunks
 from .skill_extractor import (
     _resolve_prompt_type, generate_baseline_hint, get_system_prompt_preview,
 )
-from .notebook_store import FileNotebook, generate_notebook_id
+from .workflow_store import FileWorkflow, generate_workflow_id
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 _log = logging.getLogger(__name__)
@@ -58,20 +58,20 @@ _TEXT_CLEANUP_SYSTEM = """你是一个专业的文档格式整理助手。你的
 输出：整理后的完整 Markdown 文本（直接输出内容，不要加额外说明）。"""
 
 
-def get_schema(notebook_id: str, nb: FileNotebook) -> SkillSchema:
+def get_schema(workflow_id: str, nb: FileWorkflow) -> SkillSchema:
     """获取 Schema（优先缓存，否则磁盘重建）。"""
-    if notebook_id in _schema_cache:
-        return _schema_cache[notebook_id]
+    if workflow_id in _schema_cache:
+        return _schema_cache[workflow_id]
     schema_data = nb.load_schema()
     if not schema_data:
-        raise ValueError(f"笔记本 {notebook_id} 的 Schema 不存在")
+        raise ValueError(f"工作流 {workflow_id} 的 Schema 不存在")
     meta = nb.load_meta() or {}
     schema = SkillSchema(
         book_name=schema_data.get("book_name", meta.get("doc_name", "document")),
         book_type=schema_data["book_type"],
         domains=schema_data["domains"],
     )
-    _schema_cache[notebook_id] = schema
+    _schema_cache[workflow_id] = schema
     return schema
 
 
@@ -121,7 +121,7 @@ def _cleanup_text_sync(raw_md: str) -> str:
 _PROGRESS_FILE = "_progress.json"
 
 
-def _load_progress(nb: FileNotebook) -> dict:
+def _load_progress(nb: FileWorkflow) -> dict:
     """读取 upload/_progress.json"""
     path = nb.upload_dir / _PROGRESS_FILE
     if path.exists():
@@ -132,14 +132,14 @@ def _load_progress(nb: FileNotebook) -> dict:
     return {}
 
 
-def _save_progress(nb: FileNotebook, progress: dict) -> None:
+def _save_progress(nb: FileWorkflow, progress: dict) -> None:
     """写入 upload/_progress.json"""
     (nb.upload_dir / _PROGRESS_FILE).write_text(
         json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-def _set_file_progress(nb: FileNotebook, filename: str, **kwargs) -> None:
+def _set_file_progress(nb: FileWorkflow, filename: str, **kwargs) -> None:
     """更新单个文件的进度"""
     progress = _load_progress(nb)
     if filename not in progress:
@@ -153,7 +153,7 @@ def _set_file_progress(nb: FileNotebook, filename: str, **kwargs) -> None:
 # ══════════════════════════════════════════════
 
 
-def _process_single_file(nb: FileNotebook, filename: str) -> dict:
+def _process_single_file(nb: FileWorkflow, filename: str) -> dict:
     """处理 upload/ 中的单个文件 → raw + clean text。返回处理结果。"""
     filepath = nb.upload_dir / filename
 
@@ -186,9 +186,9 @@ def _process_single_file(nb: FileNotebook, filename: str) -> dict:
     }
 
 
-async def _auto_process_worker(notebook_id: str) -> None:
+async def _auto_process_worker(workflow_id: str) -> None:
     """后台 worker — 依次处理 _progress.json 中 pending 的文件，处理完后合并 chunk + schema。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     progress = _load_progress(nb)
     all_results: list[dict] = []
 
@@ -207,7 +207,7 @@ async def _auto_process_worker(notebook_id: str) -> None:
     # 所有文件处理完成 → 合并文本 → chunk + schema
     processed = [r for r in all_results if r["status"] == "done"]
     if not processed:
-        _worker_tasks.pop(notebook_id, None)
+        _worker_tasks.pop(workflow_id, None)
         return
 
     _set_file_progress(nb, "__overall__", status="chunking", message="切分 + Schema 生成")
@@ -250,14 +250,39 @@ async def _auto_process_worker(notebook_id: str) -> None:
     baseline_hint = generate_baseline_hint(schema.book_type)
     if baseline_hint:
         nb.save_prompt("extraction_hint", baseline_hint)
-    _schema_cache[notebook_id] = schema
+    _schema_cache[workflow_id] = schema
 
     _set_file_progress(nb, "__overall__", status="done", message="全部完成",
                        total_files=len(processed),
                        total_chunks=len(chunk_result.chunks),
                        filtered_chunks=len(filter_result.kept))
 
-    _worker_tasks.pop(notebook_id, None)
+    _worker_tasks.pop(workflow_id, None)
+
+
+# ══════════════════════════════════════════════
+# 工作流管理端点
+# ══════════════════════════════════════════════
+
+
+@router.post("/workflow/create")
+async def create_workflow(name: str = ""):
+    """创建一个新的命名工作流（不上传文件）。"""
+    workflow_id = generate_workflow_id()
+    wf = FileWorkflow(workflow_id)
+    wf.save_meta(name=name or "未命名工作流")
+    return {
+        "workflow_id": workflow_id,
+        "name": name or "未命名工作流",
+        "message": f"工作流「{name or '未命名工作流'}」已创建。",
+    }
+
+
+@router.get("/workflows")
+async def api_list_workflows():
+    """列出所有工作流。"""
+    from .workflow_store import list_workflows
+    return list_workflows()
 
 
 # ══════════════════════════════════════════════
@@ -268,17 +293,23 @@ async def _auto_process_worker(notebook_id: str) -> None:
 @router.post("/upload")
 async def batch_upload(
     files: List[UploadFile] = File(...),
-    notebook_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    name: Optional[str] = None,
 ):
     """批量上传文件 → 存盘 + 去重 + 写进度文件 + 自动开始处理。
 
     Args:
         files: 上传的文件列表
-        notebook_id: 可选，指定已有笔记本 ID 以追加文件
+        workflow_id: 可选，指定已有工作流 ID 以追加文件
+        name: 可选，工作流名称（仅新建时生效）
     """
-    if not notebook_id:
-        notebook_id = generate_notebook_id()
-    nb = FileNotebook(notebook_id)
+    if not workflow_id:
+        workflow_id = generate_workflow_id()
+    wf = FileWorkflow(workflow_id)
+
+    # 若是新建工作流且给了名称，先保存 meta
+    if name and not wf.load_meta():
+        wf.save_meta(name=name)
 
     progress = _load_progress(nb)
     saved = []
@@ -307,14 +338,14 @@ async def batch_upload(
     # 自动启动后台处理
     if saved:
         # 取消可能正在运行的旧 worker
-        old_task = _worker_tasks.get(notebook_id)
+        old_task = _worker_tasks.get(workflow_id)
         if old_task and not old_task.done():
             old_task.cancel()
-        task = asyncio.create_task(_auto_process_worker(notebook_id))
-        _worker_tasks[notebook_id] = task
+        task = asyncio.create_task(_auto_process_worker(workflow_id))
+        _worker_tasks[workflow_id] = task
 
     return {
-        "notebook_id": notebook_id,
+        "workflow_id": workflow_id,
         "saved": saved,
         "skipped": skipped,
         "total_saved": len(saved),
@@ -323,10 +354,10 @@ async def batch_upload(
     }
 
 
-@router.get("/upload/progress/{notebook_id}")
-async def upload_progress_sse(notebook_id: str):
+@router.get("/upload/progress/{workflow_id}")
+async def upload_progress_sse(workflow_id: str):
     """SSE — 实时推送文件处理进度（从 _progress.json 读取）。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
 
     async def _stream():
         while True:
@@ -350,12 +381,12 @@ async def upload_progress_sse(notebook_id: str):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@router.get("/upload/{notebook_id}/files")
-async def list_upload_files(notebook_id: str):
+@router.get("/upload/{workflow_id}/files")
+async def list_upload_files(workflow_id: str):
     """返回文件列表 + 各文件处理状态 + 已处理文本（如有）。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     if not nb.root.exists():
-        raise HTTPException(404, "笔记本不存在")
+        raise HTTPException(404, "工作流不存在")
 
     progress = _load_progress(nb)
     files = []
@@ -380,13 +411,13 @@ async def list_upload_files(notebook_id: str):
                 "raw_text": raw_text,
             })
 
-    return {"notebook_id": notebook_id, "files": files, "total": len(files)}
+    return {"workflow_id": workflow_id, "files": files, "total": len(files)}
 
 
-@router.post("/reprocess/{notebook_id}/{filename}")
-async def reprocess_file(notebook_id: str, filename: str):
+@router.post("/reprocess/{workflow_id}/{filename}")
+async def reprocess_file(workflow_id: str, filename: str):
     """重新处理单个文件。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     filepath = nb.upload_dir / filename
     if not filepath.exists():
         raise HTTPException(404, f"文件不存在: {filename}")
@@ -397,7 +428,7 @@ async def reprocess_file(notebook_id: str, filename: str):
     result = await loop.run_in_executor(None, _process_single_file, nb, filename)
 
     return {
-        "notebook_id": notebook_id,
+        "workflow_id": workflow_id,
         "filename": filename,
         "status": result["status"],
         "chars": result.get("chars", 0),
@@ -413,18 +444,18 @@ async def reprocess_file(notebook_id: str, filename: str):
 @router.post("/analyze")
 async def analyze_document(file: UploadFile = File(...)):
     """单文件上传 → 同步处理 → 返回分析结果。（向后兼容）"""
-    notebook_id = generate_notebook_id()
+    workflow_id = generate_workflow_id()
     original_name = file.filename or "doc"
     file_bytes = await file.read()
 
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
 
     # 去重
     file_hash = nb.file_hash(file_bytes)
     if nb.is_duplicate(file_hash):
         return {
             "duplicate": True,
-            "notebook_id": notebook_id,
+            "workflow_id": workflow_id,
             "message": f"文件 {original_name} 已存在（SHA-256 匹配），跳过重复上传。",
         }
 
@@ -481,11 +512,11 @@ async def analyze_document(file: UploadFile = File(...)):
     baseline_hint = generate_baseline_hint(schema.book_type)
     if baseline_hint:
         nb.save_prompt("extraction_hint", baseline_hint)
-    _schema_cache[notebook_id] = schema
+    _schema_cache[workflow_id] = schema
 
     return {
-        "notebook_id": notebook_id,
-        "session_id": notebook_id,
+        "workflow_id": workflow_id,
+        "session_id": workflow_id,
         "doc_name": load_result.doc_name,
         "format": load_result.format.value,
         "book_type": schema.book_type,
@@ -507,13 +538,13 @@ async def analyze_document(file: UploadFile = File(...)):
 # ══════════════════════════════════════════════
 
 
-@router.put("/session/{notebook_id}/settings")
-async def update_settings(notebook_id: str, body: SettingsUpdate):
+@router.put("/session/{workflow_id}/settings")
+async def update_settings(workflow_id: str, body: SettingsUpdate):
     """调整提取设置（文档类型、提取策略）。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     meta = nb.load_meta()
     if not meta:
-        raise HTTPException(404, "笔记本不存在")
+        raise HTTPException(404, "工作流不存在")
 
     if body.book_type is not None:
         meta["book_type"] = body.book_type
@@ -528,14 +559,14 @@ async def update_settings(notebook_id: str, body: SettingsUpdate):
         schema_data = nb.load_schema() or {}
         schema_data["book_type"] = body.book_type
         nb._write_json("text/schema.json", schema_data)
-        if notebook_id in _schema_cache:
-            _schema_cache[notebook_id].book_type = body.book_type
+        if workflow_id in _schema_cache:
+            _schema_cache[workflow_id].book_type = body.book_type
 
     return {"ok": True, "book_type": meta.get("book_type"), "prompt_type": meta.get("prompt_type")}
 
 
-@router.post("/rechunk/{notebook_id}")
-async def rechunk_document(nb: NotebookDep, body: RechunkRequest):
+@router.post("/rechunk/{workflow_id}")
+async def rechunk_document(nb: WorkflowDep, body: RechunkRequest):
     """重新切片（基于 clean text 优先，回退 raw text）。"""
     meta = nb.load_meta()
     raw_md = nb.load_clean_text() or nb.load_raw_text()
@@ -565,11 +596,11 @@ async def rechunk_document(nb: NotebookDep, body: RechunkRequest):
     }
 
 
-@router.get("/prompt-preview/{notebook_id}")
-async def prompt_preview(nb: NotebookDep):
+@router.get("/prompt-preview/{workflow_id}")
+async def prompt_preview(nb: WorkflowDep):
     """返回当前完整 system prompt + 基线 hint。"""
     meta = nb.load_meta()
-    schema = get_schema(nb.notebook_id, nb)
+    schema = get_schema(nb.workflow_id, nb)
     book_type = meta.get("book_type", "技术手册")
     constraint = schema.to_prompt_constraint() if schema else ""
 

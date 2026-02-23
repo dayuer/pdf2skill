@@ -10,9 +10,9 @@ import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .deps import NotebookDep
+from .deps import WorkflowDep
 from .schemas import WorkflowExecuteRequest, WorkflowSaveRequest
-from .notebook_store import FileNotebook
+from .workflow_store import FileWorkflow
 from .workflow_engine import WorkflowEngine
 from .workflow_types import WorkflowDefinition
 
@@ -24,11 +24,11 @@ _engine = WorkflowEngine()
 @router.post("/execute")
 async def api_workflow_execute(body: WorkflowExecuteRequest):
     """SSE 流式执行工作流 — 实时推送每个节点的状态。"""
-    notebook_id = body.notebook_id
-    if not notebook_id:
-        raise HTTPException(400, "需要 notebook_id")
+    workflow_id = body.workflow_id
+    if not workflow_id:
+        raise HTTPException(400, "需要 workflow_id")
 
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
 
     # 解析工作流定义
     definition = WorkflowDefinition.from_json(body.workflow)
@@ -49,7 +49,7 @@ async def api_workflow_execute(body: WorkflowExecuteRequest):
         task = asyncio.create_task(
             _engine.execute(
                 workflow,
-                context={"notebook": nb, "notebook_id": notebook_id},
+                context={"notebook": nb, "workflow_id": workflow_id},
                 on_event=on_event,
             )
         )
@@ -82,11 +82,11 @@ async def api_workflow_execute(body: WorkflowExecuteRequest):
 @router.post("/execute-sync")
 async def api_workflow_execute_sync(body: WorkflowExecuteRequest):
     """同步执行工作流 — 返回完整结果（向后兼容）。"""
-    notebook_id = body.notebook_id
-    if not notebook_id:
-        raise HTTPException(400, "需要 notebook_id")
+    workflow_id = body.workflow_id
+    if not workflow_id:
+        raise HTTPException(400, "需要 workflow_id")
 
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     definition = WorkflowDefinition.from_json(body.workflow)
     workflow = _engine.build(definition)
 
@@ -97,7 +97,7 @@ async def api_workflow_execute_sync(body: WorkflowExecuteRequest):
 
     exec_ctx = await _engine.execute(
         workflow,
-        context={"notebook": nb, "notebook_id": notebook_id},
+        context={"notebook": nb, "workflow_id": workflow_id},
         on_event=on_event,
     )
 
@@ -113,18 +113,18 @@ async def api_workflow_execute_sync(body: WorkflowExecuteRequest):
 @router.post("/save")
 async def api_workflow_save(body: WorkflowSaveRequest):
     """保存工作流定义。"""
-    notebook_id = body.notebook_id
-    if not notebook_id:
-        raise HTTPException(400, "需要 notebook_id")
+    workflow_id = body.workflow_id
+    if not workflow_id:
+        raise HTTPException(400, "需要 workflow_id")
 
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     wf_path = nb.root / "workflow.json"
     wf_path.write_text(json.dumps(body.workflow, ensure_ascii=False, indent=2))
     return {"saved": True, "path": str(wf_path)}
 
 
-@router.get("/load/{notebook_id}")
-async def api_workflow_load(nb: NotebookDep):
+@router.get("/load/{workflow_id}")
+async def api_workflow_load(nb: WorkflowDep):
     """加载已保存的工作流定义。"""
     wf_path = nb.root / "workflow.json"
     if not wf_path.exists():
@@ -132,10 +132,10 @@ async def api_workflow_load(nb: NotebookDep):
     return {"workflow": json.loads(wf_path.read_text())}
 
 
-@router.post("/{notebook_id}/pin-data")
-async def api_workflow_pin_data(notebook_id: str, body: dict):
+@router.post("/{workflow_id}/pin-data")
+async def api_workflow_pin_data(workflow_id: str, body: dict):
     """设置 pinData — 固定节点输出数据用于调试。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     pin_path = nb.root / "pin_data.json"
     # 合并
     existing = {}
@@ -146,10 +146,10 @@ async def api_workflow_pin_data(notebook_id: str, body: dict):
     return {"pinned_nodes": list(existing.keys())}
 
 
-@router.get("/{notebook_id}/pin-data")
-async def api_workflow_get_pin_data(notebook_id: str):
+@router.get("/{workflow_id}/pin-data")
+async def api_workflow_get_pin_data(workflow_id: str):
     """获取 pinData。"""
-    nb = FileNotebook(notebook_id)
+    nb = FileWorkflow(workflow_id)
     pin_path = nb.root / "pin_data.json"
     if not pin_path.exists():
         return {"pin_data": {}}

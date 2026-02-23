@@ -10,29 +10,29 @@ export async function uploadFile(file) {
   return r.json();
 }
 
-export async function uploadFiles(files, notebookId) {
+export async function uploadFiles(files, workflowId) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  if (notebookId) fd.append('notebook_id', notebookId);
+  if (workflowId) fd.append('workflow_id', workflowId);
   const r = await fetch(`${BASE}/api/upload`, { method: 'POST', body: fd });
   if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
   return r.json();
 }
 
-export async function getUploadFiles(notebookId) {
-  const r = await fetch(`${BASE}/api/upload/${notebookId}/files`);
+export async function getUploadFiles(workflowId) {
+  const r = await fetch(`${BASE}/api/upload/${workflowId}/files`);
   if (!r.ok) return { files: [], total: 0 };
   return r.json();
 }
 
-export async function reprocessFile(notebookId, filename) {
-  const r = await fetch(`${BASE}/api/reprocess/${notebookId}/${encodeURIComponent(filename)}`, { method: 'POST' });
+export async function reprocessFile(workflowId, filename) {
+  const r = await fetch(`${BASE}/api/reprocess/${workflowId}/${encodeURIComponent(filename)}`, { method: 'POST' });
   if (!r.ok) throw new Error((await r.json()).detail || '处理失败');
   return r.json();
 }
 
-export function watchUploadProgress(notebookId, { onProgress, onDone, onError }) {
-  const src = new EventSource(`${BASE}/api/upload/progress/${notebookId}`);
+export function watchUploadProgress(workflowId, { onProgress, onDone, onError }) {
+  const src = new EventSource(`${BASE}/api/upload/progress/${workflowId}`);
   src.onmessage = e => onProgress?.(JSON.parse(e.data));
   src.addEventListener('done', e => { src.close(); onDone?.(JSON.parse(e.data)); });
   src.onerror = () => { src.close(); onError?.(); };

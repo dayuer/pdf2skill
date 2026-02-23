@@ -5,7 +5,7 @@ pdf2skill API — FastAPI 入口
 路由按职责拆分为 5 个模块：
   - api_analyze  : 上传/分析/设置/重切/prompt-preview
   - api_tune     : chunk 列表/调优/历史/抽验/预览
-  - api_execute  : SSE 全量执行/笔记本列表/状态
+  - api_execute  : SSE 全量执行/工作流列表/状态
   - api_skills   : Skills CRUD/注册表/图谱/向量检索
   - api_workflow : 工作流 execute/save/load
 """

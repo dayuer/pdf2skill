@@ -21,8 +21,8 @@ venv/
 # ── 运行时数据（目录保留，内容忽略）───────────
 input/*
 !input/.gitkeep
-notebooks/*
-!notebooks/.gitkeep
+workflows/*
+!workflows/.gitkeep
 output/*
 !output/.gitkeep
 sessions/*
