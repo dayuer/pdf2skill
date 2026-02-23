@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Query, HTTPException
 
 from .config import config
+from .deps import NotebookDep
 from .notebook_store import FileNotebook
 from .skill_registry import SkillRegistry
 from .skill_graph import SkillGraphBuilder
@@ -21,25 +21,20 @@ _vector_store = SkillVectorStore()
 
 
 @router.get("/session/{notebook_id}/skills")
-async def api_session_skills(notebook_id: str):
-    """获取笔记本中已提取的所有 Skill。"""
-    return FileNotebook(notebook_id).load_skills()
+async def api_session_skills(nb: NotebookDep):
+    """获取已提取的所有 Skill。"""
+    return nb.load_skills()
 
 
 @router.post("/session/{notebook_id}/generate-skills")
-async def api_generate_skills(notebook_id: str):
+async def api_generate_skills(nb: NotebookDep):
     """生成 Claude Code Skills 标准格式。"""
     from .skill_generator import generate_claude_skills
     from .skill_validator import ValidatedSkill, SKUType
 
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
     skills_data = nb.load_skills()
     if not skills_data:
-        return JSONResponse({"error": "无已提取的技能，请先执行提取"}, status_code=400)
+        raise HTTPException(400, "无已提取的技能，请先执行提取")
 
     validated = []
     for sd in skills_data:
@@ -57,11 +52,10 @@ async def api_generate_skills(notebook_id: str):
             continue
 
     if not validated:
-        return JSONResponse({"error": "无有效技能数据"}, status_code=400)
+        raise HTTPException(400, "无有效技能数据")
 
-    doc_name = meta.get("doc_name", "document")
-    skills_path = generate_claude_skills(validated, doc_name)
-
+    meta = nb.load_meta() or {}
+    skills_path = generate_claude_skills(validated, meta.get("doc_name", "document"))
     manifest_path = skills_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
 
@@ -69,23 +63,18 @@ async def api_generate_skills(notebook_id: str):
 
 
 @router.get("/session/{notebook_id}/skill/{skill_slug}")
-async def api_get_skill(notebook_id: str, skill_slug: str):
+async def api_get_skill(nb: NotebookDep, skill_slug: str):
     """获取单个 Claude Skill 完整内容。"""
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
+    meta = nb.load_meta() or {}
     doc_name = meta.get("doc_name", "document")
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in doc_name)
     base = Path(config.output_dir) / safe_name / "claude_skills" / skill_slug
 
     skill_md_path = base / "SKILL.md"
-    ref_path = base / "references" / "source.md"
-
     if not skill_md_path.exists():
-        return JSONResponse({"error": f"技能 '{skill_slug}' 不存在"}, status_code=404)
+        raise HTTPException(404, f"技能 '{skill_slug}' 不存在")
 
+    ref_path = base / "references" / "source.md"
     return {
         "slug": skill_slug,
         "skill_md": skill_md_path.read_text(encoding="utf-8"),
@@ -94,30 +83,25 @@ async def api_get_skill(notebook_id: str, skill_slug: str):
 
 
 @router.get("/session/{notebook_id}/manifest")
-async def api_get_manifest(notebook_id: str):
+async def api_get_manifest(nb: NotebookDep):
     """获取 Claude Skills manifest.json。"""
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
+    meta = nb.load_meta() or {}
     doc_name = meta.get("doc_name", "document")
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in doc_name)
     manifest_path = Path(config.output_dir) / safe_name / "claude_skills" / "manifest.json"
 
     if not manifest_path.exists():
-        return JSONResponse({"error": "尚未生成 Claude Skills"}, status_code=404)
+        raise HTTPException(404, "尚未生成 Claude Skills")
 
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 @router.post("/session/{notebook_id}/skill-graph")
-async def api_skill_graph(notebook_id: str):
+async def api_skill_graph(nb: NotebookDep):
     """构建 Skill 关系图谱。"""
-    nb = FileNotebook(notebook_id)
     skills_data = nb.load_skills()
     if not skills_data:
-        return JSONResponse({"error": "无已提取的 Skill"}, status_code=400)
+        raise HTTPException(400, "无已提取的 Skill")
 
     builder = SkillGraphBuilder()
     builder.build_from_skills(skills_data)
@@ -131,11 +115,11 @@ async def api_skill_graph(notebook_id: str):
 
 
 @router.get("/skills/registry")
-async def api_skill_registry(request: Request):
+async def api_skill_registry(
+    domain: str = Query("", description="按领域过滤"),
+    q: str = Query("", description="按触发条件搜索"),
+):
     """查询 Skill 注册表。"""
-    params = request.query_params
-    domain, q = params.get("domain", ""), params.get("q", "")
-
     if q:
         skills = _skill_registry.find_by_trigger(q)
     elif domain:
@@ -147,16 +131,13 @@ async def api_skill_registry(request: Request):
 
 
 @router.get("/skills/search")
-async def api_skill_search(request: Request):
+async def api_skill_search(
+    q: str = Query(..., description="查询文本"),
+    top_k: int = Query(5, ge=1, le=50),
+):
     """语义检索 Skill（需 Embedding 配置）。"""
-    q = request.query_params.get("q", "")
-    top_k = int(request.query_params.get("top_k", "5"))
-
-    if not q:
-        return JSONResponse({"error": "缺少查询参数 q"}, status_code=400)
-
     if not _vector_store.is_available:
-        return JSONResponse({"error": "向量检索不可用：请在 .env 中配置 EMBEDDING_* 参数"}, status_code=503)
+        raise HTTPException(503, "向量检索不可用：请配置 EMBEDDING_* 参数")
 
     results = _vector_store.search_similar(q, top_k=top_k)
     return {"query": q, "total": len(results), "results": results}

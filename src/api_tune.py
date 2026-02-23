@@ -4,31 +4,40 @@ from __future__ import annotations
 
 import random
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Query
 
+from .deps import NotebookDep
+from .schemas import TuneRequest, SampleRequest
 from .llm_client import AsyncDeepSeekClient, DeepSeekClient
 from .skill_extractor import extract_skills_batch, extract_skill_from_chunk
-from .skill_validator import SkillValidator
+from .skill_validator import SkillValidator, ValidatedSkill
 from .notebook_store import FileNotebook
 from .api_analyze import get_schema
 
 router = APIRouter(prefix="/api", tags=["tune"])
 
 
+def _validate_batch(raw_skills: list, source_chunks: list) -> tuple[list[ValidatedSkill], list[ValidatedSkill]]:
+    """公共校验流程：raw_skills + 源文本 → (passed, failed)。"""
+    validator = SkillValidator()
+    source_map = {c.index: c.content for c in source_chunks}
+    src_texts = [source_map.get(rs.source_chunk_index) for rs in raw_skills]
+    return validator.validate_batch(raw_skills, source_texts=src_texts)
+
+
 @router.get("/chunks/{notebook_id}")
-async def list_chunks(notebook_id: str, request: Request):
+async def list_chunks(
+    nb: NotebookDep,
+    q: str = Query("", description="搜索关键词"),
+    recommend: bool = Query(False, description="随机推荐 5 个"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
     """chunk 列表，支持分页 + 搜索 + 随机推荐。"""
-    nb = FileNotebook(notebook_id)
     chunks = nb.load_chunks()
     if not chunks:
-        return JSONResponse({"error": "无 chunk 数据"}, status_code=404)
-
-    params = request.query_params
-    q = params.get("q", "").strip()
-    recommend = params.get("recommend", "").lower() == "true"
-    page = int(params.get("page", "1"))
-    page_size = int(params.get("page_size", "20"))
+        from fastapi import HTTPException
+        raise HTTPException(404, "无 chunk 数据")
 
     filtered = chunks
     if q:
@@ -46,41 +55,33 @@ async def list_chunks(notebook_id: str, request: Request):
     return {
         "total": total, "page": page, "page_size": page_size,
         "items": [
-            {"index": c.index, "heading_path": c.heading_path, "char_count": c.char_count,
-             "preview": c.content[:100].replace("\n", " "), "text": c.content}
+            {"index": c.index, "heading_path": c.heading_path,
+             "char_count": c.char_count,
+             "preview": c.content[:100].replace("\n", " "),
+             "text": c.content}
             for c in page_items
         ],
     }
 
 
 @router.post("/tune/{notebook_id}")
-async def tune_chunk(notebook_id: str, request: Request):
-    """对单个 chunk 执行提取，返回原文 + 结果，自动写入版本链。"""
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
-    body = await request.json()
-    chunk_index = body.get("chunk_index", 0)
-    prompt_hint = body.get("prompt_hint", "")
-    system_prompt_override = body.get("system_prompt", "")
-
-    target = nb.load_chunks_by_indices([chunk_index])
+async def tune_chunk(nb: NotebookDep, body: TuneRequest):
+    """对单个 chunk 执行提取 + 校验，写入版本链。"""
+    target = nb.load_chunks_by_indices([body.chunk_index])
     if not target:
-        return JSONResponse({"error": f"chunk {chunk_index} 不存在"}, status_code=404)
+        from fastapi import HTTPException
+        raise HTTPException(404, f"chunk {body.chunk_index} 不存在")
     chunk = target[0]
 
-    schema = get_schema(notebook_id, nb)
-    client = DeepSeekClient()
+    schema = get_schema(nb.notebook_id, nb)
     raw_skills = extract_skill_from_chunk(
-        chunk, schema, client=client, prompt_hint=prompt_hint,
-        system_prompt_override=system_prompt_override,
+        chunk, schema, client=DeepSeekClient(),
+        prompt_hint=body.prompt_hint,
+        system_prompt_override=body.system_prompt,
     )
 
     validator = SkillValidator()
-    src_texts = [chunk.content] * len(raw_skills)
-    passed, failed = validator.validate_batch(raw_skills, source_texts=src_texts)
+    passed, failed = validator.validate_batch(raw_skills, source_texts=[chunk.content] * len(raw_skills))
 
     skills_data = [
         {"name": s.name, "trigger": s.trigger, "domain": s.domain,
@@ -93,48 +94,35 @@ async def tune_chunk(notebook_id: str, request: Request):
     ]
 
     version = nb.save_tune_record(
-        chunk_index=chunk_index, prompt_hint=prompt_hint,
+        chunk_index=body.chunk_index, prompt_hint=body.prompt_hint,
         extracted_skills=skills_data, source_text=chunk.content,
     )
 
     return {
-        "version": version, "chunk_index": chunk_index,
+        "version": version, "chunk_index": body.chunk_index,
         "source_text": chunk.content, "source_context": chunk.context,
         "heading_path": chunk.heading_path, "char_count": chunk.char_count,
-        "extracted_skills": skills_data, "prompt_hint_used": prompt_hint,
+        "extracted_skills": skills_data, "prompt_hint_used": body.prompt_hint,
         "passed": len(passed), "failed": len(failed),
     }
 
 
 @router.get("/tune-history/{notebook_id}")
-async def get_tune_history(notebook_id: str):
+async def get_tune_history(nb: NotebookDep):
     """完整调优历史（版本链）。"""
-    return FileNotebook(notebook_id).load_tune_history()
+    return nb.load_tune_history()
 
 
 @router.post("/sample-check/{notebook_id}")
-async def sample_check(notebook_id: str, request: Request):
+async def sample_check(nb: NotebookDep, body: SampleRequest):
     """随机抽样验证：选 N 个 chunk → 批量提取 → 返回逐条对比。"""
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
-    body = await request.json()
-    sample_size = body.get("sample_size", 5)
-
     chunks = nb.load_chunks()
-    schema = get_schema(notebook_id, nb)
+    schema = get_schema(nb.notebook_id, nb)
     prompt_hint = nb.get_active_prompt_hint()
-    sample = random.sample(chunks, min(sample_size, len(chunks)))
+    sample = random.sample(chunks, min(body.sample_size, len(chunks)))
 
-    async_client = AsyncDeepSeekClient()
-    raw_skills = await extract_skills_batch(sample, schema, client=async_client, prompt_hint=prompt_hint)
-
-    validator = SkillValidator()
-    source_map = {c.index: c.content for c in sample}
-    src_texts = [source_map.get(rs.source_chunk_index) for rs in raw_skills]
-    passed, failed = validator.validate_batch(raw_skills, source_texts=src_texts)
+    raw_skills = await extract_skills_batch(sample, schema, client=AsyncDeepSeekClient(), prompt_hint=prompt_hint)
+    passed, failed = _validate_batch(raw_skills, sample)
 
     results_by_chunk: dict[int, dict] = {}
     for c in sample:
@@ -161,15 +149,10 @@ async def sample_check(notebook_id: str, request: Request):
 
 
 @router.post("/preview/{notebook_id}")
-async def preview_sample(notebook_id: str, sample_size: int = 5):
-    """采样 N 个 chunk → 提取样本 Skill → 写盘 + 返回预览。"""
-    nb = FileNotebook(notebook_id)
-    meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
+async def preview_sample(nb: NotebookDep, sample_size: int = Query(5, ge=1, le=50)):
+    """采样 N 个 chunk → 提取 → 校验 → 写盘 → 返回预览。"""
     chunks = nb.load_chunks()
-    schema = get_schema(notebook_id, nb)
+    schema = get_schema(nb.notebook_id, nb)
 
     if len(chunks) <= sample_size:
         sample = chunks
@@ -177,13 +160,8 @@ async def preview_sample(notebook_id: str, sample_size: int = 5):
         step = len(chunks) / sample_size
         sample = [chunks[int(i * step)] for i in range(sample_size)]
 
-    async_client = AsyncDeepSeekClient()
-    raw_skills = await extract_skills_batch(sample, schema, client=async_client)
-
-    validator = SkillValidator()
-    source_map = {c.index: c.content for c in sample}
-    raw_source_texts = [source_map.get(rs.source_chunk_index) for rs in raw_skills]
-    passed, failed = validator.validate_batch(raw_skills, source_texts=raw_source_texts)
+    raw_skills = await extract_skills_batch(sample, schema, client=AsyncDeepSeekClient())
+    passed, failed = _validate_batch(raw_skills, sample)
 
     for i, s in enumerate(passed):
         nb.save_skill(s, idx=i)

@@ -19,7 +19,7 @@ import json
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+
 
 from .markdown_chunker import TextChunk
 from .schema_generator import SkillSchema
@@ -57,8 +57,6 @@ class FileNotebook:
 
     def __init__(self, notebook_id: str) -> None:
         self.notebook_id = notebook_id
-        # 向后兼容：同时保留 session_id 属性
-        self.session_id = notebook_id
         self._dir = _NOTEBOOKS_DIR / notebook_id
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / "skills").mkdir(exist_ok=True)
@@ -86,8 +84,6 @@ class FileNotebook:
         """保存文档元信息"""
         data = {
             "notebook_id": self.notebook_id,
-            # 向后兼容
-            "session_id": self.notebook_id,
             "doc_name": doc_name,
             "format": format,
             "filepath": filepath,
@@ -273,6 +269,12 @@ class FileNotebook:
             return ""
         return history[-1].get("prompt_hint", "")
 
+    # ──── 公共写入 ────
+
+    def update_meta(self, meta: dict) -> None:
+        """更新 meta.json（部分更新）。"""
+        self._write_json("meta.json", meta)
+
     # ──── 工具 ────
 
     def _write_json(self, filename: str, data: dict | list) -> None:
@@ -294,10 +296,6 @@ class FileNotebook:
         return safe[:60] if safe else "unnamed"
 
 
-# 向后兼容别名
-FileSession = FileNotebook
-
-
 def list_notebooks() -> list[dict]:
     """列出所有持久化的笔记本"""
     notebooks = []
@@ -313,5 +311,3 @@ def list_notebooks() -> list[dict]:
     return notebooks
 
 
-# 向后兼容别名
-list_sessions = list_notebooks

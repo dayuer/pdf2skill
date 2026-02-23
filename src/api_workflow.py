@@ -6,6 +6,8 @@ import json
 
 from fastapi import APIRouter, HTTPException
 
+from .deps import NotebookDep
+from .schemas import WorkflowExecuteRequest, WorkflowSaveRequest
 from .notebook_store import FileNotebook
 from .workflow_engine import WorkflowEngine
 
@@ -15,15 +17,14 @@ _workflow_engine = WorkflowEngine()
 
 
 @router.post("/execute")
-async def api_workflow_execute(payload: dict):
+async def api_workflow_execute(body: WorkflowExecuteRequest):
     """执行 JSON 工作流定义。"""
-    notebook_id = payload.get("session_id") or payload.get("notebook_id")
-    workflow_def = payload.get("workflow")
-    if not notebook_id or not workflow_def:
-        raise HTTPException(400, "需要 notebook_id 和 workflow")
+    notebook_id = body.notebook_id
+    if not notebook_id:
+        raise HTTPException(400, "需要 notebook_id")
 
     nb = FileNotebook(notebook_id)
-    run = _workflow_engine.parse(workflow_def)
+    run = _workflow_engine.parse(body.workflow)
 
     results: list[dict] = []
 
@@ -44,23 +45,21 @@ async def api_workflow_execute(payload: dict):
 
 
 @router.post("/save")
-async def api_workflow_save(payload: dict):
+async def api_workflow_save(body: WorkflowSaveRequest):
     """保存工作流定义。"""
-    notebook_id = payload.get("session_id") or payload.get("notebook_id")
-    workflow = payload.get("workflow")
-    if not notebook_id or not workflow:
-        raise HTTPException(400, "需要 notebook_id 和 workflow")
+    notebook_id = body.notebook_id
+    if not notebook_id:
+        raise HTTPException(400, "需要 notebook_id")
 
     nb = FileNotebook(notebook_id)
     wf_path = nb.root / "workflow.json"
-    wf_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2))
+    wf_path.write_text(json.dumps(body.workflow, ensure_ascii=False, indent=2))
     return {"saved": True, "path": str(wf_path)}
 
 
 @router.get("/load/{notebook_id}")
-async def api_workflow_load(notebook_id: str):
+async def api_workflow_load(nb: NotebookDep):
     """加载已保存的工作流定义。"""
-    nb = FileNotebook(notebook_id)
     wf_path = nb.root / "workflow.json"
     if not wf_path.exists():
         return {"workflow": None}

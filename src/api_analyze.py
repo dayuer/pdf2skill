@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, UploadFile, File
 
 from .config import config
+from .deps import NotebookDep
+from .schemas import SettingsUpdate, RechunkRequest
 from .document_loader import load_document
 from .llm_client import DeepSeekClient
 from .markdown_chunker import chunk_markdown
@@ -29,7 +30,7 @@ _schema_cache: dict[str, SkillSchema] = {}
 
 
 def get_schema(notebook_id: str, nb: FileNotebook) -> SkillSchema:
-    """获取 Schema（优先缓存，否则磁盘重建）"""
+    """获取 Schema（优先缓存，否则磁盘重建）。"""
     if notebook_id in _schema_cache:
         return _schema_cache[notebook_id]
     schema_data = nb.load_schema()
@@ -53,8 +54,7 @@ async def analyze_document(file: UploadFile = File(...)):
     upload_dir = _UPLOAD_DIR / notebook_id
     upload_dir.mkdir(parents=True, exist_ok=True)
     saved_path = upload_dir / original_name
-    content = await file.read()
-    saved_path.write_bytes(content)
+    saved_path.write_bytes(await file.read())
 
     load_result = load_document(str(saved_path))
     chunk_result = chunk_markdown(
@@ -63,8 +63,7 @@ async def analyze_document(file: UploadFile = File(...)):
     )
     filter_result = filter_chunks(chunk_result.chunks)
 
-    sync_client = DeepSeekClient()
-    schema = generate_schema(load_result.markdown, load_result.doc_name, client=sync_client)
+    schema = generate_schema(load_result.markdown, load_result.doc_name, client=DeepSeekClient())
     prompt_name, _ = _resolve_prompt_type(schema.book_type)
 
     nb = FileNotebook(notebook_id)
@@ -84,12 +83,11 @@ async def analyze_document(file: UploadFile = File(...)):
     nb.save_chunks(filter_result.kept)
     nb.save_status(phase="analyzed", total=len(filter_result.kept))
     (nb.root / "raw.md").write_text(load_result.markdown, encoding="utf-8")
-
     _schema_cache[notebook_id] = schema
 
     return {
-        "session_id": notebook_id,
         "notebook_id": notebook_id,
+        "session_id": notebook_id,
         "doc_name": load_result.doc_name,
         "format": load_result.format.value,
         "book_type": schema.book_type,
@@ -102,66 +100,56 @@ async def analyze_document(file: UploadFile = File(...)):
         "core_components": schema.fields.get("core_components", []),
         "skill_types": schema.fields.get("skill_types", []),
         "baseline_hint": generate_baseline_hint(schema.book_type),
-        "system_prompt": get_system_prompt_preview(
-            schema.book_type, schema.to_prompt_constraint()
-        ),
+        "system_prompt": get_system_prompt_preview(schema.book_type, schema.to_prompt_constraint()),
     }
 
 
 @router.put("/session/{notebook_id}/settings")
-async def update_settings(notebook_id: str, request: Request):
+async def update_settings(notebook_id: str, body: SettingsUpdate):
     """调整提取设置（文档类型、提取策略）。"""
     nb = FileNotebook(notebook_id)
     meta = nb.load_meta()
     if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
+        from fastapi import HTTPException
+        raise HTTPException(404, "笔记本不存在")
 
-    body = await request.json()
-    new_book_type = body.get("book_type", meta.get("book_type", ""))
-    new_prompt_type = body.get("prompt_type", meta.get("prompt_type", ""))
-    new_system_prompt = body.get("system_prompt")
+    if body.book_type is not None:
+        meta["book_type"] = body.book_type
+    if body.prompt_type is not None:
+        meta["prompt_type"] = body.prompt_type
+    if body.system_prompt is not None:
+        meta["custom_system_prompt"] = body.system_prompt
+    nb.update_meta(meta)
 
-    meta["book_type"] = new_book_type
-    meta["prompt_type"] = new_prompt_type
-    if new_system_prompt is not None:
-        meta["custom_system_prompt"] = new_system_prompt
-    nb._write_json("meta.json", meta)
+    # 同步 schema
+    if body.book_type is not None:
+        schema_data = nb.load_schema() or {}
+        schema_data["book_type"] = body.book_type
+        nb._write_json("schema.json", schema_data)
+        if notebook_id in _schema_cache:
+            _schema_cache[notebook_id].book_type = body.book_type
 
-    schema_data = nb.load_schema() or {}
-    schema_data["book_type"] = new_book_type
-    nb._write_json("schema.json", schema_data)
-
-    if notebook_id in _schema_cache:
-        _schema_cache[notebook_id].book_type = new_book_type
-
-    return {"ok": True, "book_type": new_book_type, "prompt_type": new_prompt_type}
+    return {"ok": True, "book_type": meta.get("book_type"), "prompt_type": meta.get("prompt_type")}
 
 
 @router.post("/rechunk/{notebook_id}")
-async def rechunk_document(notebook_id: str, request: Request):
+async def rechunk_document(nb: NotebookDep, body: RechunkRequest):
     """重新切片。"""
-    nb = FileNotebook(notebook_id)
     meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
-    body = await request.json()
-    max_chars = body.get("max_chars", 2000)
-    min_chars = body.get("min_chars", 200)
-
     md_path = nb.root / "raw.md"
     if not md_path.exists():
-        return JSONResponse({"error": "原始文档不存在，请重新上传"}, status_code=400)
+        from fastapi import HTTPException
+        raise HTTPException(400, "原始文档不存在，请重新上传")
 
     raw_md = md_path.read_text(encoding="utf-8")
-    chunk_result = chunk_markdown(raw_md, meta.get("doc_name", "document"), max_chars=max_chars, min_chars=min_chars)
+    chunk_result = chunk_markdown(raw_md, meta.get("doc_name", "document"), max_chars=body.max_chars, min_chars=body.min_chars)
     filter_result = filter_chunks(chunk_result.chunks)
 
     nb.save_chunks(filter_result.kept)
     meta["total_chunks"] = len(chunk_result.chunks)
     meta["filtered_chunks"] = filter_result.kept_count
     meta["chunk_strategy"] = chunk_result.strategy
-    nb._write_json("meta.json", meta)
+    nb.update_meta(meta)
 
     return {
         "ok": True,
@@ -169,7 +157,8 @@ async def rechunk_document(notebook_id: str, request: Request):
         "filtered_chunks": filter_result.kept_count,
         "strategy": chunk_result.strategy,
         "chunks": [
-            {"index": c.index, "heading": " > ".join(c.heading_path) if c.heading_path else f"Chunk #{c.index}",
+            {"index": c.index,
+             "heading": " > ".join(c.heading_path) if c.heading_path else f"Chunk #{c.index}",
              "char_count": c.char_count, "preview": c.content[:120]}
             for c in filter_result.kept
         ],
@@ -177,14 +166,10 @@ async def rechunk_document(notebook_id: str, request: Request):
 
 
 @router.get("/prompt-preview/{notebook_id}")
-async def prompt_preview(notebook_id: str):
+async def prompt_preview(nb: NotebookDep):
     """返回当前完整 system prompt + 基线 hint。"""
-    nb = FileNotebook(notebook_id)
     meta = nb.load_meta()
-    if not meta:
-        return JSONResponse({"error": "笔记本不存在"}, status_code=404)
-
-    schema = get_schema(notebook_id, nb)
+    schema = get_schema(nb.notebook_id, nb)
     book_type = meta.get("book_type", "技术手册")
     constraint = schema.to_prompt_constraint() if schema else ""
 
