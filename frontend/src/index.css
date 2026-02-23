@@ -62,18 +62,31 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .chunk-item.selected::before{border-color:#1a73e8;background:#1a73e8;color:#fff}
 .chunk-item .idx{color:#1a73e8;font-weight:500;margin-right:2px;display:none}
 .chunk-item .path{color:#80868b;font-size:11px;display:block;margin-top:2px}
+.chunk-item-inner{flex:1;min-width:0}
+.chunk-item-title{font-size:12px;font-weight:500;color:#3c4043;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chunk-item-preview{font-size:11px;color:#80868b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* 折叠设置 */
-.settings-area{margin-top:auto;flex-shrink:0;border-top:1px solid #e8e0d8}
-.collapsible-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;cursor:pointer;color:#5f6368;font-size:13px;font-weight:500;user-select:none}
-.collapsible-header:hover{background:#f8f9fa}
-.arrow{transition:transform .2s;font-size:10px;color:#80868b}
-.arrow.open{transform:rotate(90deg)}
-.collapsible-body{overflow:hidden;max-height:0;transition:max-height .3s ease;padding:0 16px}
-.collapsible-body.open{max-height:600px;padding-bottom:12px}
-.prompt-label{font-size:12px;color:#80868b;margin:8px 0 4px;display:flex;align-items:center;justify-content:space-between}
-.prompt-textarea{width:100%;min-height:60px;padding:10px;background:#f8f9fa;color:#1f1f1f;border:1px solid #dadce0;border-radius:8px;font-size:12px;resize:vertical;font-family:inherit;line-height:1.5}
-.prompt-textarea:focus{outline:none;border-color:#7b61ff;box-shadow:0 0 0 2px rgba(123,97,255,.12)}
+/* 来源文件条目 */
+.source-file-item{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f1f3f4;cursor:pointer;transition:background .15s}
+.source-file-item:hover{background:#f8f9fa}
+.source-file-item.active{background:#e8f0fe}
+.source-file-icon{font-size:18px;flex-shrink:0}
+.source-file-info{flex:1;min-width:0}
+.source-file-name{font-size:13px;font-weight:500;color:#1f1f1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.source-file-meta{font-size:11px;color:#80868b;margin-top:2px}
+.source-check{color:#1a73e8;font-size:14px;font-weight:700;flex-shrink:0}
+.chunk-header-row .source-check{font-size:12px}
+
+/* 来源空状态 */
+.source-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 20px;color:#80868b}
+.source-empty-icon{font-size:40px;margin-bottom:12px;opacity:.5}
+.source-empty-text{font-size:13px;text-align:center}
+
+/* chunk 详情视图 */
+.chunk-detail{flex:1;overflow-y:auto;padding:16px}
+.chunk-detail-meta{display:flex;gap:6px;margin-bottom:12px}
+.chunk-detail-tag{font-size:11px;padding:3px 8px;background:#f3e8fd;color:#7b61ff;border-radius:4px;font-weight:500}
+.chunk-detail-text{font-size:13px;color:#1f1f1f;line-height:1.8;white-space:pre-wrap;word-break:break-word;background:#faf8f5;padding:16px;border-radius:10px;border:1px solid #e8e0d8;font-family:'Georgia','Noto Serif SC',serif}
 
 /* ── 中栏（对话 / 知识提取） ── */
 .panel-center{flex:1;min-width:360px;background:#fff;display:flex;flex-direction:column;overflow-y:auto}

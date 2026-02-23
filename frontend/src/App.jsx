@@ -86,11 +86,7 @@ export default function App() {
         <div style={{ width: leftW, minWidth: 180, flexShrink: 0 }}>
           <SourcePanel
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
-            systemPrompt={s.systemPrompt} promptHint={s.promptHint}
-            onUpload={handleUpload} onSearch={s.loadChunks} onRechunk={s.doRechunk}
-            onSelectChunk={s.setSelectedChunk}
-            onSystemPromptChange={s.setSystemPrompt} onPromptHintChange={s.setPromptHint}
-            onSaveSettings={s.doSaveSettings} onSaveSystemPrompt={handleSaveSystemPrompt}
+            onUpload={handleUpload} onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}
           />
         </div>
         <Resizer onResize={handleLeftResize} />

@@ -1,28 +1,47 @@
 import { useState, useRef, useCallback } from 'react';
 
-export default function SourcePanel({
-  meta, chunks, selectedChunk, loading,
-  systemPrompt, promptHint,
-  onUpload, onSearch, onRechunk, onSelectChunk,
-  onSystemPromptChange, onPromptHintChange, onSaveSettings, onSaveSystemPrompt,
-}) {
+export default function SourcePanel({ meta, chunks, loading, onUpload, onSearch, onSelectChunk, selectedChunk }) {
   const fileRef = useRef();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [searchTimer, setSearchTimer] = useState(null);
+  const [viewingChunk, setViewingChunk] = useState(null);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     if (e.dataTransfer.files[0]) onUpload(e.dataTransfer.files[0]);
   }, [onUpload]);
 
-  const handleSearch = (val) => {
-    clearTimeout(searchTimer);
-    setSearchTimer(setTimeout(() => onSearch(val || undefined), 300));
+  // 点击 chunk → 进入详情视图
+  const handleChunkClick = (chunk) => {
+    setViewingChunk(chunk);
+    onSelectChunk?.(chunk.index);
   };
 
-  const allTypes = ['技术手册','叙事类','方法论','学术教材','操作规范','保险合同','行业报告','医学法律'];
-  if (meta?.book_type && !allTypes.includes(meta.book_type)) allTypes.push(meta.book_type);
+  // 返回列表
+  const handleBack = () => setViewingChunk(null);
 
+  // ── 详情视图 ──
+  if (viewingChunk) {
+    return (
+      <aside className="panel-left">
+        <div className="panel-header">
+          <button className="btn-icon" onClick={handleBack} title="返回列表">←</button>
+          <span className="panel-title" style={{ flex: 1 }}>
+            {(viewingChunk.heading_path || []).join(' > ') || `chunk #${viewingChunk.index}`}
+          </span>
+        </div>
+        <div className="chunk-detail">
+          <div className="chunk-detail-meta">
+            <span className="chunk-detail-tag">chunk #{viewingChunk.index}</span>
+            <span className="chunk-detail-tag">{viewingChunk.char_count} 字符</span>
+          </div>
+          <div className="chunk-detail-text">
+            {viewingChunk.text || viewingChunk.preview || '(无内容)'}
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  // ── 列表视图 ──
   return (
     <aside className="panel-left">
       <div className="panel-header">
@@ -34,7 +53,7 @@ export default function SourcePanel({
       <div className="upload-zone" onClick={() => fileRef.current?.click()}
         onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
         <span>＋</span>
-        <span>{meta ? '添加来源' : '添加来源'}</span>
+        <span>添加来源</span>
       </div>
       <input ref={fileRef} type="file" accept=".pdf,.txt,.epub,.md" style={{ display: 'none' }}
         onChange={e => e.target.files[0] && onUpload(e.target.files[0])} />
@@ -42,48 +61,50 @@ export default function SourcePanel({
       {/* 搜索 */}
       <div className="search-box">
         <span className="search-icon">🔍</span>
-        <input placeholder="搜索来源…" onChange={e => handleSearch(e.target.value)} />
+        <input placeholder="在来源中搜索…" onChange={e => {
+          const v = e.target.value;
+          clearTimeout(window._srcSearchTimer);
+          window._srcSearchTimer = setTimeout(() => onSearch?.(v || undefined), 300);
+        }} />
       </div>
 
-      {loading.upload && (
+      {loading?.upload && (
         <div className="loading-text"><div className="spinner" /><span>正在分析文档…</span></div>
       )}
 
-      {/* 文档摘要 */}
-      {meta && (
-        <div className="doc-summary">
-          <div className="row">
-            <span className="label">类型</span><span className="val">{meta.format?.toUpperCase()}</span>
-            <span className="label">领域</span><span className="val">{(meta.domains || []).join(', ')}</span>
-          </div>
-          <div className="row">
-            <span className="label">块数</span><span className="val">{meta.filtered_chunks} / {meta.total_chunks}</span>
-          </div>
-          <div className="summary-tags">
-            {(meta.core_components || []).map((c, i) => <span key={i} className="summary-tag">{c}</span>)}
-            {(meta.skill_types || []).map((c, i) => <span key={`st-${i}`} className="summary-tag green">{c}</span>)}
-          </div>
-          <select className="setting-select" style={{ marginTop: 8 }} value={meta.book_type || ''}
-            onChange={e => onSaveSettings({ book_type: e.target.value })}>
-            {allTypes.map(t => <option key={t}>{t}</option>)}
-          </select>
-        </div>
-      )}
-
-      {/* 来源列表 */}
+      {/* 来源文件列表 */}
       {meta && (
         <div className="source-list">
           <div className="chunk-header-row">
             <span className="chunk-count">选择所有来源</span>
-            <button className="btn btn-ghost btn-sm" onClick={onRechunk} style={{ fontSize: 11, padding: '3px 8px' }}>🔄 重切</button>
+            <span className="source-check">✔</span>
           </div>
+
+          {/* 主文档 */}
+          <div className="source-file-item active">
+            <span className="source-file-icon">📄</span>
+            <div className="source-file-info">
+              <div className="source-file-name">{meta.doc_name || '未命名文档'}</div>
+              <div className="source-file-meta">
+                {meta.format?.toUpperCase()} · {meta.total_chunks} 个分块 · {(meta.domains || []).join(', ')}
+              </div>
+            </div>
+            <span className="source-check">✔</span>
+          </div>
+
+          {/* 分块列表 — 点击进入详情 */}
           <div className="chunk-list">
-            {(chunks.items || []).map(c => (
-              <div key={c.index} className={`chunk-item${c.index === selectedChunk ? ' selected' : ''}`}
-                onClick={() => onSelectChunk(c.index)}>
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{(c.heading_path || []).join(' > ') || `chunk #${c.index}`}</div>
-                  <div style={{ fontSize: 11, color: '#80868b', marginTop: 2 }}>{c.preview?.substring(0, 60)}</div>
+            {(chunks?.items || []).map(c => (
+              <div key={c.index}
+                className={`chunk-item${c.index === selectedChunk ? ' selected' : ''}`}
+                onClick={() => handleChunkClick(c)}>
+                <div className="chunk-item-inner">
+                  <div className="chunk-item-title">
+                    {(c.heading_path || []).join(' > ') || `chunk #${c.index}`}
+                  </div>
+                  <div className="chunk-item-preview">
+                    {c.preview?.substring(0, 80)}
+                  </div>
                 </div>
               </div>
             ))}
@@ -91,25 +112,11 @@ export default function SourcePanel({
         </div>
       )}
 
-      {/* 折叠设置 */}
-      {meta && (
-        <div className="settings-area">
-          <div className="collapsible-header" onClick={() => setSettingsOpen(!settingsOpen)}>
-            <span>⚙️ 提取设置</span>
-            <span className={`arrow${settingsOpen ? ' open' : ''}`}>▶</span>
-          </div>
-          <div className={`collapsible-body${settingsOpen ? ' open' : ''}`}>
-            <div className="prompt-label">
-              系统 Prompt
-              <button className="btn btn-ghost btn-sm" onClick={onSaveSystemPrompt}
-                style={{ padding: '2px 8px', fontSize: 10 }}>保存</button>
-            </div>
-            <textarea className="prompt-textarea" value={systemPrompt} style={{ minHeight: 80 }}
-              onChange={e => onSystemPromptChange(e.target.value)} />
-            <div className="prompt-label">提取策略</div>
-            <textarea className="prompt-textarea" value={promptHint} placeholder="加载中..."
-              onChange={e => onPromptHintChange(e.target.value)} />
-          </div>
+      {/* 空状态 */}
+      {!meta && !loading?.upload && (
+        <div className="source-empty">
+          <div className="source-empty-icon">📁</div>
+          <div className="source-empty-text">上传 PDF / TXT / EPUB 开始分析</div>
         </div>
       )}
     </aside>

@@ -299,6 +299,7 @@ async def list_chunks(session_id: str, request: Request):
                 "heading_path": c.heading_path,
                 "char_count": c.char_count,
                 "preview": c.content[:100].replace("\n", " "),
+                "text": c.content,
             }
             for c in page_items
         ],
