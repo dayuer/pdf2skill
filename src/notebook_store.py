@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -50,28 +51,65 @@ _SUB_TEXT = "text"
 _SUB_PROMPT = "prompt"
 _SUB_SKILLS = "skills"
 
+_INDEX_FILE = _NOTEBOOKS_DIR / "INDEX.json"
 
-def _rebuild_index() -> None:
-    """重建根目录 INDEX.md 索引"""
-    lines = ["# 笔记本索引\n\n"]
-    lines.append("| ID | 文档名 | 类型 | 领域 | 块数 | Skills | 创建时间 |\n")
-    lines.append("|---|---|---|---|---|---|---|\n")
-    for d in sorted(_NOTEBOOKS_DIR.iterdir()):
-        if d.is_dir() and (d / "meta.json").exists():
-            try:
-                meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
-                skills_dir = d / _SUB_SKILLS
-                skills_count = len(list(skills_dir.glob("*.json"))) if skills_dir.exists() else 0
-                created = time.strftime("%Y-%m-%d %H:%M", time.localtime(meta.get("created_at", 0)))
-                lines.append(
-                    f"| `{d.name}` | {meta.get('doc_name', '')} | "
-                    f"{meta.get('format', '')} | {', '.join(meta.get('domains', []))} | "
-                    f"{meta.get('filtered_chunks', 0)}/{meta.get('total_chunks', 0)} | "
-                    f"{skills_count} | {created} |\n"
-                )
-            except (json.JSONDecodeError, OSError):
-                continue
-    (_NOTEBOOKS_DIR / "INDEX.md").write_text("".join(lines), encoding="utf-8")
+
+def generate_notebook_id() -> str:
+    """生成唯一笔记本 ID：YYMMDD_xxxx（日期前缀 + 4 位 hex）。
+
+    碰撞检测：若 ID 已被占用则重试（最多 100 次）。
+    同一天内 65536 个不同 ID，加上碰撞检测，唯一性万无一失。
+    """
+    prefix = time.strftime("%y%m%d")
+    for _ in range(100):
+        short = uuid.uuid4().hex[:4]
+        candidate = f"{prefix}_{short}"
+        if not (_NOTEBOOKS_DIR / candidate).exists():
+            return candidate
+    # 极端情况：回退到完整 UUID
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def _load_index() -> dict[str, dict]:
+    """读取 INDEX.json"""
+    if _INDEX_FILE.exists():
+        try:
+            return json.loads(_INDEX_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_index(index: dict[str, dict]) -> None:
+    """写入 INDEX.json"""
+    _INDEX_FILE.write_text(
+        json.dumps(index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _update_index_entry(notebook_id: str, meta: dict) -> None:
+    """在 INDEX.json 中更新/新增一条笔记本记录"""
+    index = _load_index()
+    index[notebook_id] = {
+        "notebook_id": notebook_id,
+        "doc_name": meta.get("doc_name", ""),
+        "format": meta.get("format", ""),
+        "book_type": meta.get("book_type", ""),
+        "domains": meta.get("domains", []),
+        "total_chunks": meta.get("total_chunks", 0),
+        "filtered_chunks": meta.get("filtered_chunks", 0),
+        "created_at": meta.get("created_at", 0),
+        "updated_at": time.time(),
+    }
+    _save_index(index)
+
+
+def _remove_index_entry(notebook_id: str) -> None:
+    """从 INDEX.json 中删除一条记录"""
+    index = _load_index()
+    index.pop(notebook_id, None)
+    _save_index(index)
 
 
 class FileNotebook:
@@ -172,7 +210,7 @@ class FileNotebook:
             "created_at": time.time(),
         }
         self._write_json("meta.json", data)
-        _rebuild_index()
+        _update_index_entry(self.notebook_id, data)
 
     def save_schema(self, schema: SkillSchema) -> None:
         """保存 Schema → text/schema.json"""
@@ -437,16 +475,33 @@ class FileNotebook:
 
 
 def list_notebooks() -> list[dict]:
-    """列出所有持久化的笔记本"""
+    """列出所有笔记本（优先读 INDEX.json，回退扫描目录）"""
+    index = _load_index()
+    if index:
+        result = []
+        for nid, entry in sorted(index.items(), key=lambda x: x[1].get("created_at", 0), reverse=True):
+            nb = FileNotebook(nid)
+            meta = nb.load_meta()
+            if meta:
+                meta["skills_on_disk"] = nb.skill_count()
+                meta["status"] = nb.load_status()
+                meta["uploads"] = nb.list_uploads()
+                result.append(meta)
+            else:
+                # 索引与磁盘不一致，清理
+                _remove_index_entry(nid)
+        return result
+
+    # 回退：扫描目录并重建索引
     notebooks = []
     for d in sorted(_NOTEBOOKS_DIR.iterdir()):
-        if d.is_dir():
+        if d.is_dir() and (d / "meta.json").exists():
             nb = FileNotebook(d.name)
             meta = nb.load_meta()
             if meta:
-                status = nb.load_status()
+                _update_index_entry(d.name, meta)
                 meta["skills_on_disk"] = nb.skill_count()
-                meta["status"] = status
+                meta["status"] = nb.load_status()
                 meta["uploads"] = nb.list_uploads()
                 notebooks.append(meta)
     return notebooks

@@ -14,9 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -32,7 +31,7 @@ from .semantic_filter import filter_chunks
 from .skill_extractor import (
     _resolve_prompt_type, generate_baseline_hint, get_system_prompt_preview,
 )
-from .notebook_store import FileNotebook
+from .notebook_store import FileNotebook, generate_notebook_id
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 _log = logging.getLogger(__name__)
@@ -263,9 +262,18 @@ async def _queue_worker(notebook_id: str) -> None:
 
 
 @router.post("/upload")
-async def batch_upload(files: List[UploadFile] = File(...)):
-    """批量上传文件 → 立即返回 notebook_id + 文件列表 → 后台队列依次处理。"""
-    notebook_id = str(uuid.uuid4())[:8]
+async def batch_upload(
+    files: List[UploadFile] = File(...),
+    notebook_id: Optional[str] = None,
+):
+    """批量上传文件 → 立即返回 notebook_id + 文件列表 → 后台队列依次处理。
+
+    Args:
+        files: 上传的文件列表
+        notebook_id: 可选，指定已有笔记本 ID 以追加文件
+    """
+    if not notebook_id:
+        notebook_id = generate_notebook_id()
     nb = FileNotebook(notebook_id)
 
     # 创建队列
@@ -325,7 +333,7 @@ async def upload_progress(notebook_id: str):
 @router.post("/analyze")
 async def analyze_document(file: UploadFile = File(...)):
     """单文件上传 → 同步处理 → 返回分析结果。（向后兼容）"""
-    notebook_id = str(uuid.uuid4())[:8]
+    notebook_id = generate_notebook_id()
     original_name = file.filename or "doc"
     file_bytes = await file.read()
 
