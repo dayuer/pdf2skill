@@ -425,60 +425,130 @@ async def reprocess_file(workflow_id: str, filename: str):
 
 @router.post("/chunk/{workflow_id}/{filename}")
 async def chunk_single_file(workflow_id: str, filename: str):
-    """使用 LLM 对单个文件进行语义分块 → 保存为 JSONL。"""
+    """启动 LLM 语义分块后台任务（立即返回）。通过 SSE 查询进度。"""
     nb = FileWorkflow(workflow_id)
     stem = Path(filename).stem
 
-    # 优先读 clean text ({stem}.md)，fallback raw text ({stem}.raw.md)
+    # 检查文本是否存在
     clean_path = nb.text_dir / f"{stem}.md"
     raw_path = nb.text_dir / f"{stem}.raw.md"
-
-    if clean_path.exists():
-        text = clean_path.read_text(encoding="utf-8")
-    elif raw_path.exists():
-        text = raw_path.read_text(encoding="utf-8")
-    else:
+    if not clean_path.exists() and not raw_path.exists():
         raise HTTPException(404, f"文件未处理或文本为空: {filename}")
 
-    # 读取分块 prompt
+    # 取消可能正在进行的旧任务
+    task_key = f"chunk:{workflow_id}:{filename}"
+    old = _chunk_tasks.get(task_key)
+    if old and not old.done():
+        old.cancel()
+
+    # 初始化进度
+    _chunk_progress[task_key] = {"status": "pending", "message": "等待分块", "segments_total": 0, "segments_done": 0, "chunks": 0}
+
+    # 启动后台任务
+    task = asyncio.create_task(_chunk_worker(workflow_id, filename, task_key))
+    _chunk_tasks[task_key] = task
+
+    return {
+        "workflow_id": workflow_id,
+        "filename": filename,
+        "status": "started",
+        "message": "分块任务已启动，通过 SSE 查看进度。",
+    }
+
+
+# 后台分块状态
+_chunk_tasks: dict[str, asyncio.Task] = {}
+_chunk_progress: dict[str, dict] = {}
+
+
+async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
+    """后台 LLM 分块 worker。"""
+    nb = FileWorkflow(workflow_id)
+    stem = Path(filename).stem
+
+    clean_path = nb.text_dir / f"{stem}.md"
+    raw_path = nb.text_dir / f"{stem}.raw.md"
+    text = clean_path.read_text(encoding="utf-8") if clean_path.exists() else raw_path.read_text(encoding="utf-8")
+
+    # 读取 prompt
     prompt_path = Path(__file__).parent.parent / "prompts" / "chunker_v0.1.md"
-    if not prompt_path.exists():
-        raise HTTPException(500, "分块 prompt 文件不存在")
     system_prompt = prompt_path.read_text(encoding="utf-8")
 
-    # 长文档分段 — 按段落边界切为 ~4000 字符的片段
+    # 分段
     segments = _split_text_segments(text, max_chars=4000)
+    _chunk_progress[task_key] = {
+        "status": "chunking",
+        "message": f"共 {len(segments)} 段，开始处理",
+        "segments_total": len(segments),
+        "segments_done": 0,
+        "chunks": 0,
+    }
 
     from .llm_client import AsyncDeepSeekClient
     client = AsyncDeepSeekClient()
 
     all_chunks = []
-    for seg_idx, segment in enumerate(segments):
-        user_prompt = f"请处理以下文字：\n\n{segment}"
-        resp = await client.chat(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.1,
-            max_tokens=8192,
-        )
-        # 解析 JSONL 响应
-        parsed = _parse_jsonl_response(resp.content)
-        all_chunks.extend(parsed)
+    try:
+        for seg_idx, segment in enumerate(segments):
+            user_prompt = f"请处理以下文字：\n\n{segment}"
+            resp = await client.chat(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.1,
+                max_tokens=8192,
+            )
+            parsed = _parse_jsonl_response(resp.content)
+            all_chunks.extend(parsed)
 
-    # 保存为 JSONL
-    jsonl_path = nb.text_dir / f"{stem}.jsonl"
-    lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
-    jsonl_path.write_text("\n".join(lines), encoding="utf-8")
+            _chunk_progress[task_key] = {
+                "status": "chunking",
+                "message": f"已完成 {seg_idx + 1}/{len(segments)} 段，累计 {len(all_chunks)} 个片段",
+                "segments_total": len(segments),
+                "segments_done": seg_idx + 1,
+                "chunks": len(all_chunks),
+            }
 
-    return {
-        "workflow_id": workflow_id,
-        "filename": filename,
-        "jsonl_path": str(jsonl_path.relative_to(nb.root)),
-        "total_chunks": len(all_chunks),
-        "kept_chunks": len(all_chunks),
-        "strategy": f"LLM 语义分块 ({len(segments)} 段)",
-        "message": f"已分块 {len(all_chunks)} 个片段 → {jsonl_path.name}",
-    }
+        # 保存到 chunk/ 目录
+        jsonl_path = nb.chunk_dir / f"{stem}.jsonl"
+        lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
+        jsonl_path.write_text("\n".join(lines), encoding="utf-8")
+
+        _chunk_progress[task_key] = {
+            "status": "done",
+            "message": f"已分块 {len(all_chunks)} 个片段 → chunk/{stem}.jsonl",
+            "segments_total": len(segments),
+            "segments_done": len(segments),
+            "chunks": len(all_chunks),
+            "jsonl_path": f"chunk/{stem}.jsonl",
+        }
+    except Exception as e:
+        _chunk_progress[task_key] = {
+            "status": "error",
+            "message": str(e),
+            "segments_total": len(segments),
+            "segments_done": _chunk_progress.get(task_key, {}).get("segments_done", 0),
+            "chunks": len(all_chunks),
+        }
+
+
+@router.get("/chunk/progress/{workflow_id}/{filename}")
+async def chunk_progress_sse(workflow_id: str, filename: str):
+    """SSE — 实时推送分块进度。"""
+    task_key = f"chunk:{workflow_id}:{filename}"
+
+    async def _stream():
+        while True:
+            progress = _chunk_progress.get(task_key, {"status": "unknown", "message": "无分块任务"})
+            yield f"data: {json.dumps(progress, ensure_ascii=False)}\n\n"
+
+            if progress.get("status") in ("done", "error"):
+                yield f"event: done\ndata: {json.dumps(progress, ensure_ascii=False)}\n\n"
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _split_text_segments(text: str, max_chars: int = 4000) -> list[str]:

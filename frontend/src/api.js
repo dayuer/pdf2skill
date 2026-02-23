@@ -118,3 +118,11 @@ export async function chunkFile(workflowId, filename) {
   if (!r.ok) throw new Error((await r.json()).detail || '分块失败');
   return r.json();
 }
+
+export function watchChunkProgress(workflowId, filename, { onProgress, onDone, onError }) {
+  const src = new EventSource(`${BASE}/api/chunk/progress/${workflowId}/${encodeURIComponent(filename)}`);
+  src.onmessage = e => onProgress?.(JSON.parse(e.data));
+  src.addEventListener('done', e => { src.close(); onDone?.(JSON.parse(e.data)); });
+  src.onerror = () => { src.close(); onError?.(); };
+  return () => src.close();
+}

@@ -48,6 +48,7 @@ _WORKFLOWS_DIR.mkdir(exist_ok=True)
 # 子目录名称常量
 _SUB_UPLOAD = "upload"
 _SUB_TEXT = "text"
+_SUB_CHUNK = "chunk"
 _SUB_PROMPT = "prompt"
 _SUB_SKILLS = "skills"
 
@@ -121,7 +122,7 @@ class FileWorkflow:
         self._dir = _WORKFLOWS_DIR / workflow_id
         self._dir.mkdir(parents=True, exist_ok=True)
         # 自动创建子目录
-        for sub in (_SUB_UPLOAD, _SUB_TEXT, _SUB_PROMPT, _SUB_SKILLS):
+        for sub in (_SUB_UPLOAD, _SUB_TEXT, _SUB_CHUNK, _SUB_PROMPT, _SUB_SKILLS):
             (self._dir / sub).mkdir(exist_ok=True)
 
     @property
@@ -135,6 +136,10 @@ class FileWorkflow:
     @property
     def text_dir(self) -> Path:
         return self._dir / _SUB_TEXT
+
+    @property
+    def chunk_dir(self) -> Path:
+        return self._dir / _SUB_CHUNK
 
     @property
     def prompt_dir(self) -> Path:

@@ -106,7 +106,14 @@ export default function App() {
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
             onBatchUpload={handleBatchUpload}
             onReprocess={s.doReprocess}
-            onChunkFile={(filename) => api.chunkFile(s.workflowId, filename)}
+            onChunkFile={async (filename, { setChunkResult, setChunking }) => {
+              await api.chunkFile(s.workflowId, filename);
+              api.watchChunkProgress(s.workflowId, filename, {
+                onProgress: (p) => setChunkResult(p),
+                onDone: (p) => { setChunkResult(p); setChunking(false); },
+                onError: () => { setChunkResult({ status: 'error', message: '连接中断' }); setChunking(false); },
+              });
+            }}
             uploadProgress={s.uploadProgress}
             uploadFiles={s.uploadFiles}
             onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}

@@ -88,11 +88,11 @@ export default function SourcePanel({
                 setChunking(true);
                 setChunkResult(null);
                 try {
-                  const res = await onChunkFile?.(viewingFile.filename);
-                  setChunkResult(res);
+                  await onChunkFile?.(viewingFile.filename, { setChunkResult, setChunking });
                 } catch (e) {
-                  setChunkResult({ error: e.message });
-                } finally { setChunking(false); }
+                  setChunkResult({ status: 'error', message: e.message });
+                  setChunking(false);
+                }
               }}
               disabled={chunking || !viewingFile.clean_text}
             >
@@ -100,18 +100,20 @@ export default function SourcePanel({
             </button>
           </div>
 
-          {/* 分块结果 */}
+          {/* 分块进度 */}
           {chunkResult && (
             <div className="file-detail-text" style={{ marginTop: 12 }}>
               <div className="file-detail-label">
-                {chunkResult.error
-                  ? `❌ ${chunkResult.error}`
-                  : `✅ ${chunkResult.message}`}
+                {chunkResult.status === 'error'
+                  ? `❌ ${chunkResult.message}`
+                  : chunkResult.status === 'done'
+                    ? `✅ ${chunkResult.message}`
+                    : `⏳ ${chunkResult.message}`}
               </div>
-              {chunkResult.kept_chunks > 0 && (
+              {chunkResult.chunks > 0 && (
                 <div style={{ fontSize: 12, color: '#5f6368', marginTop: 4 }}>
-                  策略: {chunkResult.strategy} · 原始 {chunkResult.total_chunks} 块 → 保留 {chunkResult.kept_chunks} 块
-                  <br/>输出: {chunkResult.jsonl_path}
+                  {chunkResult.segments_done}/{chunkResult.segments_total} 段已处理 · 累计 {chunkResult.chunks} 个片段
+                  {chunkResult.jsonl_path && <><br/>输出: {chunkResult.jsonl_path}</>}
                 </div>
               )}
             </div>
