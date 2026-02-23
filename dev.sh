@@ -64,7 +64,7 @@ do_start() {
   echo ""
   echo "✅ 服务已启动"
   echo "   后端: http://localhost:8000"
-  echo "   前端: http://localhost:5173"
+  echo "   前端: http://localhost:4000"
 }
 
 do_stop() {
