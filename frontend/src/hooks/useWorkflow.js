@@ -40,7 +40,16 @@ export function useWorkflow() {
     setLoading(l => ({ ...l, upload: true }));
     setUploadProgress({});
     try {
-      const data = await api.uploadFiles(files, workflowId);
+      // 若还没有 workflowId，先创建工作流
+      let wfId = workflowId;
+      if (!wfId) {
+        const createRes = await fetch('/api/workflow/create', { method: 'POST' });
+        const createData = await createRes.json();
+        wfId = createData.workflow_id;
+        persistWorkflow(wfId);
+      }
+
+      const data = await api.uploadFiles(files, wfId);
       persistWorkflow(data.workflow_id);
 
       // 监听 SSE 处理进度
@@ -48,7 +57,6 @@ export function useWorkflow() {
         onProgress: (status) => setUploadProgress(status),
         onDone: async () => {
           setLoading(l => ({ ...l, upload: false }));
-          // 加载最终状态
           const st = await api.getSessionState(data.workflow_id).catch(() => null);
           if (st?.meta) setMeta(st.meta);
           const cs = await api.loadChunks(data.workflow_id).catch(() => ({ items: [], total: 0 }));
@@ -56,7 +64,6 @@ export function useWorkflow() {
           const pp = await api.getPromptPreview(data.workflow_id).catch(() => null);
           if (pp?.system_prompt) setSystemPrompt(pp.system_prompt);
           if (pp?.baseline_hint) setPromptHint(pp.baseline_hint);
-          // 更新文件列表
           const uf = await api.getUploadFiles(data.workflow_id).catch(() => ({ files: [] }));
           setUploadFiles(uf.files || []);
         },
