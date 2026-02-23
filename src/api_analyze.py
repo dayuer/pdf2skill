@@ -425,7 +425,7 @@ async def reprocess_file(workflow_id: str, filename: str):
 
 @router.post("/chunk/{workflow_id}/{filename}")
 async def chunk_single_file(workflow_id: str, filename: str):
-    """对单个文件的 clean text 进行分块 → 保存为 JSONL。"""
+    """使用 LLM 对单个文件进行语义分块 → 保存为 JSONL。"""
     nb = FileWorkflow(workflow_id)
     stem = Path(filename).stem
 
@@ -440,35 +440,93 @@ async def chunk_single_file(workflow_id: str, filename: str):
     else:
         raise HTTPException(404, f"文件未处理或文本为空: {filename}")
 
-    from .markdown_chunker import chunk_markdown
-    from .semantic_filter import filter_chunks
+    # 读取分块 prompt
+    prompt_path = Path(__file__).parent.parent / "prompts" / "chunker_v0.1.md"
+    if not prompt_path.exists():
+        raise HTTPException(500, "分块 prompt 文件不存在")
+    system_prompt = prompt_path.read_text(encoding="utf-8")
 
-    chunk_result = chunk_markdown(text, filename, split_level=config.chunk.split_level)
-    filter_result = filter_chunks(chunk_result.chunks)
+    # 长文档分段 — 按段落边界切为 ~4000 字符的片段
+    segments = _split_text_segments(text, max_chars=4000)
 
-    # 保存为 JSONL — 每行一个 JSON 对象
+    from .llm_client import AsyncDeepSeekClient
+    client = AsyncDeepSeekClient()
+
+    all_chunks = []
+    for seg_idx, segment in enumerate(segments):
+        user_prompt = f"请处理以下文字：\n\n{segment}"
+        resp = await client.chat(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=8192,
+        )
+        # 解析 JSONL 响应
+        parsed = _parse_jsonl_response(resp.content)
+        all_chunks.extend(parsed)
+
+    # 保存为 JSONL
     jsonl_path = nb.text_dir / f"{stem}.jsonl"
-    lines = []
-    for i, chunk in enumerate(filter_result.kept):
-        entry = {
-            "index": i,
-            "source": filename,
-            "heading_path": chunk.heading_path if hasattr(chunk, "heading_path") else [],
-            "text": chunk.text if hasattr(chunk, "text") else str(chunk),
-            "char_count": chunk.char_count if hasattr(chunk, "char_count") else len(str(chunk)),
-        }
-        lines.append(json.dumps(entry, ensure_ascii=False))
+    lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
     jsonl_path.write_text("\n".join(lines), encoding="utf-8")
 
     return {
         "workflow_id": workflow_id,
         "filename": filename,
         "jsonl_path": str(jsonl_path.relative_to(nb.root)),
-        "total_chunks": len(chunk_result.chunks),
-        "kept_chunks": len(filter_result.kept),
-        "strategy": chunk_result.strategy,
-        "message": f"已分块 {len(filter_result.kept)} 个片段 → {jsonl_path.name}",
+        "total_chunks": len(all_chunks),
+        "kept_chunks": len(all_chunks),
+        "strategy": f"LLM 语义分块 ({len(segments)} 段)",
+        "message": f"已分块 {len(all_chunks)} 个片段 → {jsonl_path.name}",
     }
+
+
+def _split_text_segments(text: str, max_chars: int = 4000) -> list[str]:
+    """按段落边界将长文本切为多个片段。保证不在句子中间断开。"""
+    if len(text) <= max_chars:
+        return [text]
+
+    paragraphs = text.split("\n\n")
+    segments = []
+    current = []
+    current_len = 0
+
+    for para in paragraphs:
+        para_len = len(para) + 2  # +2 for \n\n
+        if current_len + para_len > max_chars and current:
+            segments.append("\n\n".join(current))
+            current = [para]
+            current_len = para_len
+        else:
+            current.append(para)
+            current_len += para_len
+
+    if current:
+        segments.append("\n\n".join(current))
+
+    return segments
+
+
+def _parse_jsonl_response(content: str) -> list[dict]:
+    """从 LLM 响应中解析 JSONL 行。容忍 markdown 代码块包裹。"""
+    # 去除可能的 ```jsonl ... ``` 包裹
+    content = content.strip()
+    if content.startswith("```"):
+        # 去掉第一行 (```jsonl) 和最后一行 (```)
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    results = []
+    for line in content.strip().split("\n"):
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+            results.append(obj)
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 # ══════════════════════════════════════════════
