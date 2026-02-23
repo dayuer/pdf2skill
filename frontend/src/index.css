@@ -339,3 +339,20 @@ body{font-family:'Google Sans Text','Google Sans',-apple-system,'Segoe UI',sans-
 .react-flow__controls{border-radius:8px!important;box-shadow:0 1px 6px rgba(0,0,0,.08)!important}
 .react-flow__controls button{background:#fff!important;border-color:#e0d8cf!important}
 .react-flow__controls button:hover{background:#f8f9fa!important}
+
+/* ══════ n8n 节点展开配置面板 ══════ */
+.rf-node.expanded{min-width:280px;max-width:360px;border-color:#7b61ff;box-shadow:0 4px 16px rgba(123,97,255,.15)}
+.rf-node-detail{padding:0 14px 14px;cursor:default}
+.nd-divider{height:1px;background:#e8e0d8;margin:0 -14px 10px}
+.nd-section-title{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:500;color:#5f6368;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.nd-type-tag{font-size:10px;padding:2px 6px;border-radius:4px;background:#f3e8fd;color:#7b61ff;font-weight:500;text-transform:none;letter-spacing:0}
+.nd-field{margin-bottom:8px}
+.nd-field-row{display:flex;align-items:center;justify-content:space-between}
+.nd-label{display:block;font-size:11px;color:#80868b;margin-bottom:3px;font-weight:500}
+.nd-input{width:100%;padding:6px 10px;background:#f8f9fa;border:1px solid #dadce0;border-radius:6px;font-size:12px;font-family:inherit;color:#1f1f1f;outline:none}
+.nd-input:focus{border-color:#7b61ff;background:#fff;box-shadow:0 0 0 2px rgba(123,97,255,.1)}
+.nd-select{width:100%;padding:6px 10px;background:#f8f9fa;border:1px solid #dadce0;border-radius:6px;font-size:12px;font-family:inherit;color:#1f1f1f;cursor:pointer;outline:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2380868b'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+.nd-select:focus{border-color:#7b61ff}
+.nd-textarea{width:100%;padding:8px 10px;background:#f8f9fa;border:1px solid #dadce0;border-radius:6px;font-size:11px;font-family:'Menlo','Monaco',monospace;color:#1f1f1f;resize:vertical;line-height:1.5;min-height:60px;outline:none}
+.nd-textarea:focus{border-color:#7b61ff;background:#fff;box-shadow:0 0 0 2px rgba(123,97,255,.1)}
+.nd-actions{margin-top:10px;display:flex;gap:6px}
