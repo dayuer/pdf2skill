@@ -174,30 +174,7 @@ export default function SourcePanel({
         }} />
       </div>
 
-      {/* 来源文件列表 + chunks */}
-      {meta && (
-        <div className="source-list">
-          <div className="chunk-header-row">
-            <span className="chunk-count">分块 ({meta.filtered_chunks || 0})</span>
-          </div>
-          <div className="chunk-list">
-            {(chunks?.items || []).map(c => (
-              <div key={c.index}
-                className={`chunk-item${c.index === selectedChunk ? ' selected' : ''}`}
-                onClick={() => handleChunkClick(c)}>
-                <div className="chunk-item-inner">
-                  <div className="chunk-item-title">
-                    {(c.heading_path || []).join(' > ') || `chunk #${c.index}`}
-                  </div>
-                  <div className="chunk-item-preview">
-                    {c.preview?.substring(0, 80)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
 
       {/* 空状态 */}
       {!meta && !loading?.upload && (!uploadFiles || uploadFiles.length === 0) && (
