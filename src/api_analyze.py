@@ -307,20 +307,20 @@ async def batch_upload(
         file_bytes = await f.read()
 
         # 去重
-        file_hash = nb.file_hash(file_bytes)
-        if nb.is_duplicate(file_hash):
+        file_hash = wf.file_hash(file_bytes)
+        if wf.is_duplicate(file_hash):
             skipped.append({"filename": filename, "reason": "duplicate"})
             continue
 
         # 存盘
-        (nb.upload_dir / filename).write_bytes(file_bytes)
-        nb.register_file(filename, file_hash)
+        (wf.upload_dir / filename).write_bytes(file_bytes)
+        wf.register_file(filename, file_hash)
         saved.append({"filename": filename, "size": len(file_bytes)})
 
         # 标记为 pending
         progress[filename] = {"status": "pending", "message": "等待处理", "updated_at": time.time()}
 
-    _save_progress(nb, progress)
+    _save_progress(wf, progress)
 
     # 自动启动后台处理
     if saved:
