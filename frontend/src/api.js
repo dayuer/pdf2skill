@@ -112,3 +112,9 @@ export async function getManifest(workflowId) {
   if (!r.ok) return null;
   return r.json();
 }
+
+export async function chunkFile(workflowId, filename) {
+  const r = await fetch(`${BASE}/api/chunk/${workflowId}/${encodeURIComponent(filename)}`, { method: 'POST' });
+  if (!r.ok) throw new Error((await r.json()).detail || '分块失败');
+  return r.json();
+}

@@ -106,6 +106,7 @@ export default function App() {
             meta={s.meta} chunks={s.chunks} selectedChunk={s.selectedChunk} loading={s.loading}
             onBatchUpload={handleBatchUpload}
             onReprocess={s.doReprocess}
+            onChunkFile={(filename) => api.chunkFile(s.workflowId, filename)}
             uploadProgress={s.uploadProgress}
             uploadFiles={s.uploadFiles}
             onSearch={s.loadChunks} onSelectChunk={s.setSelectedChunk}

@@ -7,12 +7,14 @@ const STATUS_ICON = {
 };
 
 export default function SourcePanel({
-  meta, chunks, loading, onBatchUpload, onReprocess,
+  meta, chunks, loading, onBatchUpload, onReprocess, onChunkFile,
   uploadProgress, uploadFiles, onSearch, onSelectChunk, selectedChunk,
 }) {
   const fileRef = useRef();
   const [viewingChunk, setViewingChunk] = useState(null);
   const [viewingFile, setViewingFile] = useState(null);
+  const [chunkResult, setChunkResult] = useState(null);
+  const [chunking, setChunking] = useState(false);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -70,7 +72,7 @@ export default function SourcePanel({
             <div className="file-detail-empty">暂无处理结果</div>
           )}
 
-          {/* 重新处理按钮 */}
+          {/* 操作按钮 */}
           <div className="file-detail-actions">
             <button
               className="btn-reprocess"
@@ -79,7 +81,41 @@ export default function SourcePanel({
             >
               {loading?.upload ? '处理中…' : '🔄 重新处理'}
             </button>
+            <button
+              className="btn-reprocess"
+              style={{ marginLeft: 8, background: '#e8f0fe', color: '#1a73e8', border: '1px solid #c2d9fc' }}
+              onClick={async () => {
+                setChunking(true);
+                setChunkResult(null);
+                try {
+                  const res = await onChunkFile?.(viewingFile.filename);
+                  setChunkResult(res);
+                } catch (e) {
+                  setChunkResult({ error: e.message });
+                } finally { setChunking(false); }
+              }}
+              disabled={chunking || !viewingFile.clean_text}
+            >
+              {chunking ? '分块中…' : '✂️ 分块'}
+            </button>
           </div>
+
+          {/* 分块结果 */}
+          {chunkResult && (
+            <div className="file-detail-text" style={{ marginTop: 12 }}>
+              <div className="file-detail-label">
+                {chunkResult.error
+                  ? `❌ ${chunkResult.error}`
+                  : `✅ ${chunkResult.message}`}
+              </div>
+              {chunkResult.kept_chunks > 0 && (
+                <div style={{ fontSize: 12, color: '#5f6368', marginTop: 4 }}>
+                  策略: {chunkResult.strategy} · 原始 {chunkResult.total_chunks} 块 → 保留 {chunkResult.kept_chunks} 块
+                  <br/>输出: {chunkResult.jsonl_path}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </aside>
     );

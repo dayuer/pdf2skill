@@ -423,6 +423,54 @@ async def reprocess_file(workflow_id: str, filename: str):
     }
 
 
+@router.post("/chunk/{workflow_id}/{filename}")
+async def chunk_single_file(workflow_id: str, filename: str):
+    """对单个文件的 clean text 进行分块 → 保存为 JSONL。"""
+    nb = FileWorkflow(workflow_id)
+    stem = Path(filename).stem
+
+    # 优先读 clean text ({stem}.md)，fallback raw text ({stem}.raw.md)
+    clean_path = nb.text_dir / f"{stem}.md"
+    raw_path = nb.text_dir / f"{stem}.raw.md"
+
+    if clean_path.exists():
+        text = clean_path.read_text(encoding="utf-8")
+    elif raw_path.exists():
+        text = raw_path.read_text(encoding="utf-8")
+    else:
+        raise HTTPException(404, f"文件未处理或文本为空: {filename}")
+
+    from .markdown_chunker import chunk_markdown
+    from .semantic_filter import filter_chunks
+
+    chunk_result = chunk_markdown(text, filename, split_level=config.chunk.split_level)
+    filter_result = filter_chunks(chunk_result.chunks)
+
+    # 保存为 JSONL — 每行一个 JSON 对象
+    jsonl_path = nb.text_dir / f"{stem}.jsonl"
+    lines = []
+    for i, chunk in enumerate(filter_result.kept):
+        entry = {
+            "index": i,
+            "source": filename,
+            "heading_path": chunk.heading_path if hasattr(chunk, "heading_path") else [],
+            "text": chunk.text if hasattr(chunk, "text") else str(chunk),
+            "char_count": chunk.char_count if hasattr(chunk, "char_count") else len(str(chunk)),
+        }
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    jsonl_path.write_text("\n".join(lines), encoding="utf-8")
+
+    return {
+        "workflow_id": workflow_id,
+        "filename": filename,
+        "jsonl_path": str(jsonl_path.relative_to(nb.root)),
+        "total_chunks": len(chunk_result.chunks),
+        "kept_chunks": len(filter_result.kept),
+        "strategy": chunk_result.strategy,
+        "message": f"已分块 {len(filter_result.kept)} 个片段 → {jsonl_path.name}",
+    }
+
+
 # ══════════════════════════════════════════════
 # 单文件同步端点（向后兼容）
 # ══════════════════════════════════════════════
