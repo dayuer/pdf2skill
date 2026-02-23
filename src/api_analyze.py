@@ -36,6 +36,7 @@ from .skill_extractor import (
     _resolve_prompt_type, generate_baseline_hint, get_system_prompt_preview,
 )
 from .workflow_store import FileWorkflow, generate_workflow_id
+from .file_classifier import classify_file, FileLevel
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 _log = logging.getLogger(__name__)
@@ -178,6 +179,17 @@ def _process_single_file(nb: FileWorkflow, filename: str) -> dict:
                        format=load_result.format.value,
                        chars=len(clean_md))
 
+    # L1 文件额外执行骨架提取
+    level = classify_file(filename)
+    if level == FileLevel.L1_SCHEMA:
+        try:
+            from .schema_extractor import extract_skeleton, save_skeleton
+            skeleton = extract_skeleton(nb.upload_dir / filename)
+            save_skeleton(skeleton, nb.base / "skeleton.json")
+            _log.info("L1 骨架提取完成: %s → skeleton.json", filename)
+        except Exception as e:
+            _log.warning("L1 骨架提取失败 [%s]: %s", filename, e)
+
     return {
         "status": "done",
         "filename": filename,
@@ -185,6 +197,7 @@ def _process_single_file(nb: FileWorkflow, filename: str) -> dict:
         "format": load_result.format.value,
         "chars": len(clean_md),
         "clean_md": clean_md,
+        "level": level.value,
     }
 
 
@@ -325,8 +338,13 @@ async def batch_upload(
         wf.register_file(filename, file_hash)
         saved.append({"filename": filename, "size": len(file_bytes)})
 
-        # 标记为 pending
-        progress[filename] = {"status": "pending", "message": "等待处理", "updated_at": time.time()}
+        # 分类 + 标记为 pending
+        level = classify_file(filename)
+        progress[filename] = {
+            "status": "pending", "message": "等待处理",
+            "level": level.value,
+            "updated_at": time.time(),
+        }
 
     _save_progress(wf, progress)
 
