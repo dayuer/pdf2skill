@@ -526,7 +526,7 @@ async def _chunk_worker(workflow_id: str, filename: str, task_key: str):
     text = clean_path.read_text(encoding="utf-8") if clean_path.exists() else raw_path.read_text(encoding="utf-8")
 
     # 读取 prompt
-    prompt_path = Path(__file__).parent.parent / "prompts" / "chunker_v0.1.md"
+    prompt_path = Path(__file__).parent.parent / "prompts" / "chunker_v0.2.md"
     system_prompt = prompt_path.read_text(encoding="utf-8")
 
     # 分段
