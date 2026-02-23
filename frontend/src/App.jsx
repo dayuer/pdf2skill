@@ -19,7 +19,7 @@ export default function App() {
   const rightBase = useRef(280);
 
   const handleLeftResize = useCallback((delta) => {
-    setLeftW(Math.max(180, Math.min(450, leftBase.current + delta)));
+    setLeftW(Math.max(180, Math.min(window.innerWidth * 0.65, leftBase.current + delta)));
   }, []);
   const handleRightResize = useCallback((delta) => {
     setRightW(Math.max(200, Math.min(450, rightBase.current - delta)));
