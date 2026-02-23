@@ -1,14 +1,16 @@
 """
-文件化会话管理 — 持久化 Pipeline 状态
+笔记本持久化管理 — Notebook Store
 
-每个会话对应 sessions/{session_id}/ 目录：
+每个笔记本对应 notebooks/{notebook_id}/ 目录：
   meta.json    — 文档名、格式、类型、时间
   schema.json  — R1 推断的 Schema
   chunks.json  — 粗筛后的文本块列表
   skills/      — 每个提取到的 Skill 单独一个 .json 文件
   status.json  — 处理进度
+  workflow.json — 工作流定义
 
-服务器重启后可从磁盘恢复所有会话。
+根目录包含 INDEX.md 索引文件。
+服务器重启后可从磁盘恢复所有笔记本。
 """
 
 from __future__ import annotations
@@ -24,18 +26,46 @@ from .schema_generator import SkillSchema
 from .skill_validator import ValidatedSkill, ValidationStatus
 
 
-_SESSIONS_DIR = Path("sessions")
-_SESSIONS_DIR.mkdir(exist_ok=True)
+_NOTEBOOKS_DIR = Path("notebooks")
+_NOTEBOOKS_DIR.mkdir(exist_ok=True)
 
 
-class FileSession:
-    """文件化的 Pipeline 会话"""
+def _rebuild_index() -> None:
+    """重建根目录 INDEX.md 索引"""
+    lines = ["# 笔记本索引\n\n"]
+    lines.append("| ID | 文档名 | 类型 | 领域 | 块数 | Skills | 创建时间 |\n")
+    lines.append("|---|---|---|---|---|---|---|\n")
+    for d in sorted(_NOTEBOOKS_DIR.iterdir()):
+        if d.is_dir() and (d / "meta.json").exists():
+            try:
+                meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+                skills_count = len(list((d / "skills").glob("*.json"))) if (d / "skills").exists() else 0
+                created = time.strftime("%Y-%m-%d %H:%M", time.localtime(meta.get("created_at", 0)))
+                lines.append(
+                    f"| `{d.name}` | {meta.get('doc_name', '')} | "
+                    f"{meta.get('format', '')} | {', '.join(meta.get('domains', []))} | "
+                    f"{meta.get('filtered_chunks', 0)}/{meta.get('total_chunks', 0)} | "
+                    f"{skills_count} | {created} |\n"
+                )
+            except (json.JSONDecodeError, OSError):
+                continue
+    (_NOTEBOOKS_DIR / "INDEX.md").write_text("".join(lines), encoding="utf-8")
 
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.root = _SESSIONS_DIR / session_id
-        self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "skills").mkdir(exist_ok=True)
+
+class FileNotebook:
+    """文件化的笔记本（原 FileSession）"""
+
+    def __init__(self, notebook_id: str) -> None:
+        self.notebook_id = notebook_id
+        # 向后兼容：同时保留 session_id 属性
+        self.session_id = notebook_id
+        self._dir = _NOTEBOOKS_DIR / notebook_id
+        self._dir.mkdir(parents=True, exist_ok=True)
+        (self._dir / "skills").mkdir(exist_ok=True)
+
+    @property
+    def root(self) -> Path:
+        return self._dir
 
     # ──── 写入 ────
 
@@ -55,7 +85,9 @@ class FileSession:
     ) -> None:
         """保存文档元信息"""
         data = {
-            "session_id": self.session_id,
+            "notebook_id": self.notebook_id,
+            # 向后兼容
+            "session_id": self.notebook_id,
             "doc_name": doc_name,
             "format": format,
             "filepath": filepath,
@@ -69,6 +101,7 @@ class FileSession:
             "created_at": time.time(),
         }
         self._write_json("meta.json", data)
+        _rebuild_index()
 
     def save_schema(self, schema: SkillSchema) -> None:
         """保存 Schema"""
@@ -109,32 +142,27 @@ class FileSession:
             "source_chunk_index": skill.source_chunk_index,
             "source_context": skill.source_context,
         }
-        path = self.root / "skills" / f"{idx:04d}_{self._safe_name(skill.name)}.json"
+        path = self._dir / "skills" / f"{idx:04d}_{self._safe_name(skill.name)}.json"
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ──── Checkpoint Index（断点续传） ────
 
     def mark_chunks_done(self, chunk_indices: list[int]) -> None:
-        """标记一批 chunk 已处理完毕，追加写入 index"""
-        idx_file = self.root / "progress_index.json"
+        """标记一批 chunk 已处理完毕"""
+        idx_file = self._dir / "progress_index.json"
         existing = self._load_progress_index()
         existing.update(chunk_indices)
-        idx_file.write_text(
-            json.dumps(sorted(existing), ensure_ascii=False),
-            encoding="utf-8",
-        )
+        idx_file.write_text(json.dumps(sorted(existing), ensure_ascii=False), encoding="utf-8")
 
     def get_pending_chunk_indices(self, total: int) -> list[int]:
-        """返回还未处理的 chunk 索引列表"""
         done = self._load_progress_index()
         return [i for i in range(total) if i not in done]
 
     def get_done_count(self) -> int:
-        """已处理的 chunk 数量"""
         return len(self._load_progress_index())
 
     def _load_progress_index(self) -> set[int]:
-        idx_file = self.root / "progress_index.json"
+        idx_file = self._dir / "progress_index.json"
         if not idx_file.exists():
             return set()
         try:
@@ -178,14 +206,12 @@ class FileSession:
         return self._read_json("schema.json")
 
     def load_chunks(self) -> list[TextChunk]:
-        """从磁盘还原文本块列表（全量）"""
         data = self._read_json("chunks.json")
         if not data:
             return []
         return [self._dict_to_chunk(c) for c in data]
 
     def load_chunks_by_indices(self, indices: list[int]) -> list[TextChunk]:
-        """按索引加载指定 chunk（最小内存：只读文件一次，只返回需要的）"""
         data = self._read_json("chunks.json")
         if not data:
             return []
@@ -193,7 +219,6 @@ class FileSession:
         return [self._dict_to_chunk(c) for c in data if c["index"] in idx_set]
 
     def chunk_count(self) -> int:
-        """总 chunk 数（不加载全部内容）"""
         data = self._read_json("chunks.json")
         return len(data) if data else 0
 
@@ -207,8 +232,7 @@ class FileSession:
         )
 
     def load_skills(self) -> list[dict]:
-        """加载所有已保存的 Skill"""
-        skills_dir = self.root / "skills"
+        skills_dir = self._dir / "skills"
         skills = []
         for f in sorted(skills_dir.glob("*.json")):
             try:
@@ -221,19 +245,11 @@ class FileSession:
         return self._read_json("status.json")
 
     def skill_count(self) -> int:
-        return len(list((self.root / "skills").glob("*.json")))
+        return len(list((self._dir / "skills").glob("*.json")))
 
-    # ──── 调优历史（Prompt 版本链） ────
+    # ──── 调优历史 ────
 
-    def save_tune_record(
-        self,
-        *,
-        chunk_index: int,
-        prompt_hint: str,
-        extracted_skills: list[dict],
-        source_text: str = "",
-    ) -> int:
-        """追加一条调优记录，返回新版本号"""
+    def save_tune_record(self, *, chunk_index: int, prompt_hint: str, extracted_skills: list[dict], source_text: str = "") -> int:
         history = self.load_tune_history()
         version = len(history) + 1
         record = {
@@ -249,11 +265,9 @@ class FileSession:
         return version
 
     def load_tune_history(self) -> list[dict]:
-        """读取完整调优历史"""
         return self._read_json("tune_history.json") or []
 
     def get_active_prompt_hint(self) -> str:
-        """返回最后一次调优的 prompt_hint（用于全量执行）"""
         history = self.load_tune_history()
         if not history:
             return ""
@@ -262,11 +276,11 @@ class FileSession:
     # ──── 工具 ────
 
     def _write_json(self, filename: str, data: dict | list) -> None:
-        path = self.root / filename
+        path = self._dir / filename
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _read_json(self, filename: str) -> dict | list | None:
-        path = self.root / filename
+        path = self._dir / filename
         if not path.exists():
             return None
         try:
@@ -276,21 +290,28 @@ class FileSession:
 
     @staticmethod
     def _safe_name(name: str) -> str:
-        """将 Skill 名称转为文件安全字符串"""
         safe = name.replace("/", "-").replace("\\", "-").replace(" ", "-")
         return safe[:60] if safe else "unnamed"
 
 
-def list_sessions() -> list[dict]:
-    """列出所有持久化的会话"""
-    sessions = []
-    for d in sorted(_SESSIONS_DIR.iterdir()):
+# 向后兼容别名
+FileSession = FileNotebook
+
+
+def list_notebooks() -> list[dict]:
+    """列出所有持久化的笔记本"""
+    notebooks = []
+    for d in sorted(_NOTEBOOKS_DIR.iterdir()):
         if d.is_dir():
-            fs = FileSession(d.name)
-            meta = fs.load_meta()
+            nb = FileNotebook(d.name)
+            meta = nb.load_meta()
             if meta:
-                status = fs.load_status()
-                meta["skills_on_disk"] = fs.skill_count()
+                status = nb.load_status()
+                meta["skills_on_disk"] = nb.skill_count()
                 meta["status"] = status
-                sessions.append(meta)
-    return sessions
+                notebooks.append(meta)
+    return notebooks
+
+
+# 向后兼容别名
+list_sessions = list_notebooks

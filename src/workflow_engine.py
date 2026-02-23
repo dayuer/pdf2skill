@@ -135,7 +135,7 @@ class WorkflowEngine:
 
         Args:
             run: 解析后的工作流
-            context: 共享上下文（session_id、FileSession 等）
+            context: 共享上下文（notebook_id、FileNotebook 等）
             on_status: 状态回调 (node_id, status, data)
         """
         run.status = "running"
@@ -245,7 +245,7 @@ def _summarize(result: Any) -> str | None:
 @register_step("document_loader")
 async def step_load(node: WorkflowNode, context: dict, upstream: dict):
     """文档加载（上传时已完成，直接返回 meta）"""
-    fs = context.get("session")
+    fs = context.get("notebook")
     if fs:
         return fs.load_meta()
     return {"status": "skipped", "reason": "已在上传阶段完成"}
@@ -254,7 +254,7 @@ async def step_load(node: WorkflowNode, context: dict, upstream: dict):
 @register_step("chunker")
 async def step_chunk(node: WorkflowNode, context: dict, upstream: dict):
     """切分（上传时已完成）"""
-    fs = context.get("session")
+    fs = context.get("notebook")
     if fs:
         chunks = fs.load_chunks()
         return {"chunks": chunks, "count": len(chunks)}
@@ -270,7 +270,7 @@ async def step_filter(node: WorkflowNode, context: dict, upstream: dict):
 @register_step("schema_gen")
 async def step_schema(node: WorkflowNode, context: dict, upstream: dict):
     """Schema 生成 — 保存 system prompt"""
-    fs = context.get("session")
+    fs = context.get("notebook")
     prompt = node.config.get("system_prompt", "")
     if fs and prompt:
         meta = fs.load_meta()

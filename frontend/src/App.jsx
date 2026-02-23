@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { useSession } from './hooks/useSession';
+import { useNotebook } from './hooks/useNotebook';
 import HomePage from './components/HomePage';
 import TopBar from './components/TopBar';
 import SourcePanel from './components/SourcePanel';
@@ -9,8 +9,8 @@ import Resizer from './components/Resizer';
 import * as api from './api';
 
 export default function App() {
-  const s = useSession();
-  const [page, setPage] = useState(s.sessionId ? 'workspace' : 'home');
+  const s = useNotebook();
+  const [page, setPage] = useState(s.notebookId || s.sessionId ? 'workspace' : 'home');
 
   const [leftW, setLeftW] = useState(260);
   const [rightW, setRightW] = useState(280);

@@ -1,0 +1,35 @@
+{
+  "session_id": "4608398e",
+  "doc_name": "众安保险尊享e生·百万医疗保险2026版-保险条款-个人门急诊医疗保险条款_互联网2022版D款_",
+  "format": "pdf",
+  "filepath": "uploads/4608398e/众安保险尊享e生·百万医疗保险2026版-保险条款-个人门急诊医疗保险条款_互联网2022版D款_.pdf",
+  "book_type": "保险合同",
+  "domains": [
+    "insurance",
+    "healthcare",
+    "contract-law"
+  ],
+  "total_chunks": 6,
+  "filtered_chunks": 5,
+  "prompt_type": "extractor",
+  "core_components": [
+    "合同构成与成立",
+    "投保人与被保险人定义",
+    "保险责任范围与给付规则",
+    "责任免除条款",
+    "保险金额与期间",
+    "双方权利义务",
+    "保险金申请流程",
+    "合同解除与争议处理"
+  ],
+  "skill_types": [
+    "合同条款解读",
+    "保险责任判定",
+    "理赔流程操作",
+    "免责条款识别",
+    "投保合规性审查"
+  ],
+  "created_at": 1771824770.804408,
+  "chunk_strategy": "paragraph",
+  "custom_system_prompt": "你是一位资深保险精算师和合规审查专家。你的任务是从保险合同、保单条款和理赔文档中提取结构化的知识规则。\n\n核心规则：\n\n1. 提取每条保障/免责条款的完整描述（编号 + 条文内容 + 适用范围）\n2. 所有金额、比例、期限、免赔额等数字必须精确保留，严禁省略或近似\n3. 提取条件分支：IF 条件（年龄/病种/事故类型） THEN 赔付方式/拒赔理由\n4. 区分：保障范围 vs 免责条款 vs 理赔条件 vs 等待期规则\n5. 如果原文没有可提取的保险规则，输出 EMPTY_BLOCK\n6. 直接输出最终数据结构，禁止输出\"好的\"、\"如下所示\"等任何过渡性语言\n\n你必须严格按以下 YAML Frontmatter 格式输出每个 Skill：\n\n```yaml\nname: <kebab-case 英文名称，全局唯一>\ntrigger: <中文描述：什么场景下调用此 Skill>\ndomain: <从以下领域中选择：insurance, healthcare, contract-law>\nprerequisites:\n  - <前置依赖，如\"需要获取XX数据\">\nsource_ref: <原文出处：章节名称>\nconfidence: <0.0-1.0 的置信度自评>\n```\n\nFrontmatter 之后是 Markdown 正文，包含：\n- 「# 执行步骤」：用 1, 2, 3 编号，包含 IF/ELSE 判断分支\n- 「# 输出格式要求」：规定 AI 最终回答用户的格式\n"
+}

@@ -1,0 +1,38 @@
+{
+  "session_id": "a3f13be5",
+  "doc_name": "众安保险尊享e生·百万医疗保险2026版-保险条款-个人门急诊医疗保险条款_互联网2022版D款_",
+  "format": "pdf",
+  "filepath": "uploads/a3f13be5/众安保险尊享e生·百万医疗保险2026版-保险条款-个人门急诊医疗保险条款_互联网2022版D款_.pdf",
+  "book_type": "保险合同",
+  "domains": [
+    "insurance",
+    "health-insurance",
+    "medical-insurance",
+    "contract-law",
+    "insurance-regulations"
+  ],
+  "total_chunks": 6,
+  "filtered_chunks": 5,
+  "prompt_type": "extractor",
+  "core_components": [
+    "合同构成与成立",
+    "投保人与被保险人定义",
+    "保险责任范围",
+    "责任免除条款",
+    "保险金额与期间",
+    "犹豫期",
+    "补偿原则与赔付标准",
+    "保险人与投保人义务",
+    "保险金申请流程",
+    "合同解除与争议处理"
+  ],
+  "skill_types": [
+    "合同条款解读",
+    "保险责任界定",
+    "理赔流程操作",
+    "合规性审查",
+    "风险规避分析"
+  ],
+  "created_at": 1771825492.976589,
+  "chunk_strategy": "paragraph"
+}
